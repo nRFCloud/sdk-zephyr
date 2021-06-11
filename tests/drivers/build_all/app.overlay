@@ -102,7 +102,17 @@
 				   <&test_gpio 0 0>,
 				   <&test_gpio 0 0>,
 				   <&test_gpio 0 0>,
-				   <&test_gpio 0 0>;
+				   <&test_gpio 0 0>,
+				   <&test_gpio 0 0>,
+				   <&test_gpio 0 0>,
+				   <&test_gpio 0 0>,
+				   <&test_gpio 0 0>,
+				   <&test_gpio 0 0>,
+				   <&test_gpio 0 0>,
+				   <&test_gpio 0 0>,
+				   <&test_gpio 0 0>,
+				   <&test_gpio 0 0>,
+				   <&test_gpio 0 0>;	/* 0x40 */
 
 			#include "spi.dtsi"
 		};
@@ -115,6 +125,8 @@
 
 			#include "uart.dtsi"
 		};
+
+		#include "led.dtsi"
 
 		dht22 {
 			compatible = "aosong,dht";

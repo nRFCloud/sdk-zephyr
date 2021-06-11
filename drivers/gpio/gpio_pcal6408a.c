@@ -25,7 +25,7 @@ enum {
 	PCAL6408A_REG_PULL_UP_DOWN_SELECT       = 0x44,
 	PCAL6408A_REG_INTERRUPT_MASK            = 0x45,
 	PCAL6408A_REG_INTERRUPT_STATUS          = 0x46,
-	PCAL6408A_REG_OUTPUT_PORT_CONFIGURATION = 0x4F,
+	PCAL6408A_REG_OUTPUT_PORT_CONFIGURATION = 0x4f,
 };
 
 struct pcal6408a_pins_cfg {
@@ -61,8 +61,6 @@ struct pcal6408a_drv_cfg {
 
 	const struct device *i2c;
 	uint16_t i2c_addr;
-	uint8_t init_out_low;
-	uint8_t init_out_high;
 	const struct device *int_gpio_dev;
 	gpio_pin_t int_gpio_pin;
 	gpio_dt_flags_t int_gpio_flags;
@@ -122,6 +120,7 @@ static int pcal6408a_pin_configure(const struct device *dev,
 {
 	struct pcal6408a_drv_data *drv_data = dev->data;
 	struct pcal6408a_pins_cfg pins_cfg;
+	gpio_flags_t flags_io;
 	int rc;
 
 	/* This device does not support open-source outputs, and open-drain
@@ -130,6 +129,15 @@ static int pcal6408a_pin_configure(const struct device *dev,
 	 */
 	if ((flags & GPIO_SINGLE_ENDED) != 0 ||
 	    (flags & GPIO_INT_DEBOUNCE) != 0) {
+		return -ENOTSUP;
+	}
+
+	/* Pins in this device can be either inputs or outputs and cannot be
+	 * completely disconnected.
+	 */
+	flags_io = (flags & (GPIO_INPUT | GPIO_OUTPUT));
+	if (flags_io == (GPIO_INPUT | GPIO_OUTPUT) ||
+	    flags_io == GPIO_DISCONNECTED) {
 		return -ENOTSUP;
 	}
 
@@ -188,12 +196,12 @@ static int pcal6408a_process_input(const struct device *dev,
 	const struct pcal6408a_drv_cfg *drv_cfg = dev->config;
 	struct pcal6408a_drv_data *drv_data = dev->data;
 	int rc;
-	uint8_t changed_inputs;
+	uint8_t int_sources;
 	uint8_t input_port;
 
 	rc = i2c_reg_read_byte(drv_cfg->i2c, drv_cfg->i2c_addr,
 			       PCAL6408A_REG_INTERRUPT_STATUS,
-			       &changed_inputs);
+			       &int_sources);
 	if (rc != 0) {
 		LOG_ERR("%s: failed to read interrupt sources: %d",
 			dev->name, rc);
@@ -216,31 +224,29 @@ static int pcal6408a_process_input(const struct device *dev,
 
 	/* It may happen that some inputs change their states between above
 	 * reads of the interrupt status and input port registers. Such changes
-	 * will not be noted in `changed_inputs`, thus to correctly detect them,
+	 * will not be noted in `int_sources`, thus to correctly detect them,
 	 * the current state of inputs needs to be additionally compared with
 	 * the one read last time, and any differences need to be added to
-	 * `changed_inputs`.
+	 * `int_sources`.
 	 */
-	changed_inputs |= ((input_port ^ drv_data->input_port_last)
-			   & drv_data->pins_cfg.configured_as_inputs);
+	int_sources |= ((input_port ^ drv_data->input_port_last)
+			& ~drv_data->triggers.masked);
+
 	drv_data->input_port_last = input_port;
 
-	if (changed_inputs) {
-		LOG_ERR("sources: %02x, inputs: %02x",
-			changed_inputs, input_port);
-
+	if (int_sources) {
 		uint8_t dual_edge_triggers = drv_data->triggers.dual_edge;
 		uint8_t falling_edge_triggers =
 			(~dual_edge_triggers & drv_data->triggers.on_low);
 		uint8_t fired_triggers = 0;
 
 		/* For dual edge triggers, react to all state changes. */
-		fired_triggers |= (changed_inputs & dual_edge_triggers);
+		fired_triggers |= (int_sources & dual_edge_triggers);
 		/* For single edge triggers, fire callbacks only for the pins
 		 * that transitioned to their configured target state (0 for
 		 * falling edges, 1 otherwise, hence the XOR operation below).
 		 */
-		fired_triggers |= ((input_port & changed_inputs)
+		fired_triggers |= ((input_port & int_sources)
 				   ^ falling_edge_triggers);
 
 		gpio_fire_callbacks(&drv_data->callbacks, dev, fired_triggers);
@@ -456,9 +462,8 @@ static int pcal6408a_init(const struct device *dev)
 	const struct pcal6408a_drv_cfg *drv_cfg = dev->config;
 	struct pcal6408a_drv_data *drv_data = dev->data;
 	const struct pcal6408a_pins_cfg initial_pins_cfg = {
-		.configured_as_inputs = ~(drv_cfg->init_out_low |
-					  drv_cfg->init_out_high),
-		.outputs_high = drv_cfg->init_out_high,
+		.configured_as_inputs = 0xff,
+		.outputs_high = 0,
 		.pull_ups_selected = 0,
 		.pulls_enabled = 0,
 	};
@@ -477,6 +482,12 @@ static int pcal6408a_init(const struct device *dev)
 	 * this driver.
 	 */
 	if (drv_cfg->reset_gpio_dev) {
+		if (!device_is_ready(drv_cfg->reset_gpio_dev)) {
+			LOG_ERR("%s is not ready",
+				drv_cfg->reset_gpio_dev->name);
+			return -ENODEV;
+		}
+
 		rc = gpio_pin_configure(drv_cfg->reset_gpio_dev,
 					drv_cfg->reset_gpio_pin,
 					drv_cfg->reset_gpio_flags |
@@ -626,10 +637,8 @@ static const struct gpio_driver_api pcal6408a_drv_api = {
 			.port_pin_mask =				   \
 				GPIO_PORT_PIN_MASK_FROM_DT_INST(idx),	   \
 		},							   \
-		.i2c = DEVICE_DT_GET(DT_BUS(DT_DRV_INST(idx))),		   \
+		.i2c = DEVICE_DT_GET(DT_INST_BUS(idx)),			   \
 		.i2c_addr = DT_INST_REG_ADDR(idx),			   \
-		.init_out_low = DT_INST_PROP(idx, init_out_low),	   \
-		.init_out_high = DT_INST_PROP(idx, init_out_high),	   \
 		INIT_INT_GPIO_FIELDS(idx)				   \
 		INIT_RESET_GPIO_FIELDS(idx)				   \
 	};								   \
@@ -639,7 +648,7 @@ static const struct gpio_driver_api pcal6408a_drv_api = {
 		.dev = DEVICE_DT_INST_GET(idx),				   \
 	};								   \
 	DEVICE_DT_INST_DEFINE(idx, pcal6408a_init,			   \
-			      device_pm_control_nop,			   \
+			      NULL,					   \
 			      &pcal6408a_data##idx, &pcal6408a_cfg##idx,   \
 			      POST_KERNEL,				   \
 			      CONFIG_GPIO_PCAL6408A_INIT_PRIORITY,	   \

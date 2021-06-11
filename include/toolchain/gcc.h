@@ -61,6 +61,9 @@
 	(__STDC_VERSION__) >= 201100
 #define BUILD_ASSERT(EXPR, MSG...) _Static_assert(EXPR, "" MSG)
 #define BUILD_ASSERT_MSG(EXPR, MSG) __DEPRECATED_MACRO BUILD_ASSERT(EXPR, MSG)
+#else
+#define BUILD_ASSERT(EXPR, MSG...)
+#define BUILD_ASSERT_MSG(EXPR, MSG)
 #endif
 
 #include <toolchain/common.h>
@@ -89,7 +92,7 @@
 /* The GNU assembler for Cortex-M3 uses # for immediate values, not
  * comments, so the @nobits# trick does not work.
  */
-#if defined(CONFIG_ARM)
+#if defined(CONFIG_ARM) || defined(CONFIG_ARM64)
 #define _NODATA_SECTION(segment)  __attribute__((section(#segment)))
 #else
 #define _NODATA_SECTION(segment)				\
@@ -106,7 +109,7 @@ __extension__ ({							\
 })
 
 
-#if __GNUC__ >= 7 && defined(CONFIG_ARM)
+#if __GNUC__ >= 7 && (defined(CONFIG_ARM) || defined(CONFIG_ARM64))
 
 /* Version of UNALIGNED_PUT() which issues a compiler_barrier() after
  * the store. It is required to workaround an apparent optimization
@@ -187,6 +190,9 @@ do {                                                                    \
 #ifndef __deprecated
 #define __deprecated	__attribute__((deprecated))
 #endif
+#ifndef __attribute_const__
+#define __attribute_const__ __attribute__((__const__))
+#endif
 #define ARG_UNUSED(x) (void)(x)
 
 #define likely(x)   __builtin_expect((bool)!!(x), true)
@@ -243,7 +249,7 @@ do {                                                                    \
 
 #if defined(_ASMLANGUAGE)
 
-#if defined(CONFIG_ARM) && !defined(CONFIG_ARM64)
+#if defined(CONFIG_ARM)
 
 #if defined(CONFIG_ASSEMBLER_ISA_THUMB2)
 
@@ -262,7 +268,7 @@ do {                                                                    \
 #define FUNC_CODE()
 #define FUNC_INSTR(a)
 
-#endif /* CONFIG_ARM && !CONFIG_ARM64 */
+#endif /* CONFIG_ARM */
 
 #endif /* _ASMLANGUAGE */
 
@@ -276,7 +282,7 @@ do {                                                                    \
 #if defined(_ASMLANGUAGE)
 
 #if defined(CONFIG_ARM) || defined(CONFIG_NIOS2) || defined(CONFIG_RISCV) \
-	|| defined(CONFIG_XTENSA)
+	|| defined(CONFIG_XTENSA) || defined(CONFIG_ARM64)
 #define GTEXT(sym) .global sym; .type sym, %function
 #define GDATA(sym) .global sym; .type sym, %object
 #define WTEXT(sym) .weak sym; .type sym, %function
@@ -369,7 +375,7 @@ do {                                                                    \
 #endif /* _ASMLANGUAGE */
 
 #if defined(_ASMLANGUAGE)
-#if defined(CONFIG_ARM) && !defined(CONFIG_ARM64)
+#if defined(CONFIG_ARM)
 #if defined(CONFIG_ASSEMBLER_ISA_THUMB2)
 /* '.syntax unified' is a gcc-ism used in thumb-2 asm files */
 #define _ASM_FILE_PROLOGUE .text; .syntax unified; .thumb
@@ -378,7 +384,7 @@ do {                                                                    \
 #endif /* CONFIG_ASSEMBLER_ISA_THUMB2 */
 #elif defined(CONFIG_ARM64)
 #define _ASM_FILE_PROLOGUE .text
-#endif /* CONFIG_ARM64 || (CONFIG_ARM && !CONFIG_ARM64)*/
+#endif /* CONFIG_ARM64 || CONFIG_ARM */
 #endif /* _ASMLANGUAGE */
 
 /*
@@ -396,7 +402,24 @@ do {                                                                    \
 
 #define GEN_ABS_SYM_END }
 
-#if defined(CONFIG_ARM) && !defined(CONFIG_ARM64)
+/*
+ * Note that GEN_ABSOLUTE_SYM(), depending on the architecture
+ * and toolchain, may restrict the range of values permitted
+ * for assignment to the named symbol.
+ *
+ * For example, on x86, "value" is interpreated as signed
+ * 32-bit integer. Passing in an unsigned 32-bit integer
+ * with MSB set would result in a negative integer.
+ * Moreover, GCC would error out if an integer larger
+ * than 2^32-1 is passed as "value".
+ */
+
+/*
+ * GEN_ABSOLUTE_SYM_KCONFIG() is outputted by the build system
+ * to generate named symbol/value pairs for kconfigs.
+ */
+
+#if defined(CONFIG_ARM)
 
 /*
  * GNU/ARM backend does not have a proper operand modifier which does not
@@ -411,6 +434,11 @@ do {                                                                    \
 		",%B0"                              \
 		"\n\t.type\t" #name ",%%object" :  : "n"(~(value)))
 
+#define GEN_ABSOLUTE_SYM_KCONFIG(name, value)       \
+	__asm__(".globl\t" #name                    \
+		"\n\t.equ\t" #name "," #value       \
+		"\n\t.type\t" #name ",%object")
+
 #elif defined(CONFIG_X86)
 
 #define GEN_ABSOLUTE_SYM(name, value)               \
@@ -418,12 +446,22 @@ do {                                                                    \
 		",%c0"                              \
 		"\n\t.type\t" #name ",@object" :  : "n"(value))
 
+#define GEN_ABSOLUTE_SYM_KCONFIG(name, value)       \
+	__asm__(".globl\t" #name                    \
+		"\n\t.equ\t" #name "," #value       \
+		"\n\t.type\t" #name ",@object")
+
 #elif defined(CONFIG_ARC) || defined(CONFIG_ARM64)
 
 #define GEN_ABSOLUTE_SYM(name, value)               \
 	__asm__(".globl\t" #name "\n\t.equ\t" #name \
 		",%c0"                              \
 		"\n\t.type\t" #name ",@object" :  : "n"(value))
+
+#define GEN_ABSOLUTE_SYM_KCONFIG(name, value)       \
+	__asm__(".globl\t" #name                    \
+		"\n\t.equ\t" #name "," #value       \
+		"\n\t.type\t" #name ",@object")
 
 #elif defined(CONFIG_NIOS2) || defined(CONFIG_RISCV) || defined(CONFIG_XTENSA)
 
@@ -433,18 +471,33 @@ do {                                                                    \
 		",%0"                              \
 		"\n\t.type\t" #name ",%%object" :  : "n"(value))
 
+#define GEN_ABSOLUTE_SYM_KCONFIG(name, value)       \
+	__asm__(".globl\t" #name                    \
+		"\n\t.equ\t" #name "," #value       \
+		"\n\t.type\t" #name ",%object")
+
 #elif defined(CONFIG_ARCH_POSIX)
 #define GEN_ABSOLUTE_SYM(name, value)               \
 	__asm__(".globl\t" #name "\n\t.equ\t" #name \
 		",%c0"                              \
 		"\n\t.type\t" #name ",@object" :  : "n"(value))
 
+#define GEN_ABSOLUTE_SYM_KCONFIG(name, value)       \
+	__asm__(".globl\t" #name                    \
+		"\n\t.equ\t" #name "," #value       \
+		"\n\t.type\t" #name ",@object")
 
 #elif defined(CONFIG_SPARC)
 #define GEN_ABSOLUTE_SYM(name, value)			\
 	__asm__(".global\t" #name "\n\t.equ\t" #name	\
 		",%0"					\
 		"\n\t.type\t" #name ",#object" : : "n"(value))
+
+#define GEN_ABSOLUTE_SYM_KCONFIG(name, value)       \
+	__asm__(".globl\t" #name                    \
+		"\n\t.equ\t" #name "," #value       \
+		"\n\t.type\t" #name ",#object")
+
 #else
 #error processor architecture not supported
 #endif

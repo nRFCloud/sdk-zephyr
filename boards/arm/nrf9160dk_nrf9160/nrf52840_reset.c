@@ -23,6 +23,10 @@ int bt_hci_transport_setup(const struct device *h4)
 	char c;
 	const struct device *port = DEVICE_DT_GET(RESET_GPIO_CTRL);
 
+	if (!device_is_ready(port)) {
+		return -EIO;
+	}
+
 	/* Configure pin as output and initialize it to inactive state. */
 	err = gpio_pin_configure(port, RESET_GPIO_PIN,
 				 RESET_GPIO_FLAGS | GPIO_OUTPUT_INACTIVE);

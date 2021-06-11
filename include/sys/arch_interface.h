@@ -216,6 +216,14 @@ typedef FUNC_NORETURN void (*arch_cpustart_t)(void *data);
  */
 void arch_start_cpu(int cpu_num, k_thread_stack_t *stack, int sz,
 		    arch_cpustart_t fn, void *arg);
+
+/**
+ * @brief Return CPU power status
+ *
+ * @param cpu_num Integer number of the CPU
+ */
+bool arch_cpu_active(int cpu_num);
+
 /** @} */
 
 
@@ -249,6 +257,15 @@ static inline bool arch_irq_unlocked(unsigned int key);
 
 /**
  * Disable the specified interrupt line
+ *
+ * @note: The behavior of interrupts that arrive after this call
+ * returns and before the corresponding call to arch_irq_enable() is
+ * undefined.  The hardware is not required to latch and deliver such
+ * an interrupt, though on some architectures that may work.  Other
+ * architectures will simply lose such an interrupt and never deliver
+ * it.  Many drivers and subsystems are not tolerant of such dropped
+ * interrupts and it is the job of the application layer to ensure
+ * that behavior remains correct.
  *
  * @see irq_disable()
  */
@@ -600,19 +617,6 @@ void arch_mem_domain_partition_remove(struct k_mem_domain *domain,
  */
 void arch_mem_domain_partition_add(struct k_mem_domain *domain,
 				   uint32_t partition_id);
-
-/**
- * @brief Remove the memory domain
- *
- * Architecture-specific hook to manage internal data structures or hardware
- * state when a memory domain has been destroyed.
- *
- * Thread assignments to the memory domain are only cleared after this function
- * runs.
- *
- * @param domain The memory domain structure which needs to be deleted.
- */
-void arch_mem_domain_destroy(struct k_mem_domain *domain);
 #endif /* CONFIG_ARCH_MEM_DOMAIN_SYNCHRONOUS_API */
 
 /**
@@ -816,7 +820,7 @@ void arch_gdb_step(void);
  * @{
  */
 
-#ifdef CONFIG_CACHE_MANAGEMENT
+#if defined(CONFIG_CACHE_MANAGEMENT) && defined(CONFIG_HAS_ARCH_CACHE)
 /**
  *
  * @brief Enable d-cache
@@ -886,7 +890,7 @@ int arch_icache_range(void *addr, size_t size, int op);
  *
  * @brief Get d-cache line size
  *
- * @see sys_dcache_line_size_get
+ * @see sys_cache_data_line_size_get
  */
 size_t arch_dcache_line_size_get(void);
 #endif /* CONFIG_DCACHE_LINE_SIZE_DETECT */
@@ -896,12 +900,12 @@ size_t arch_dcache_line_size_get(void);
  *
  * @brief Get i-cache line size
  *
- * @see sys_icache_line_size_get
+ * @see sys_cache_instr_line_size_get
  */
 size_t arch_icache_line_size_get(void);
 #endif /* CONFIG_ICACHE_LINE_SIZE_DETECT */
 
-#endif /* CONFIG_CACHE_MANAGEMENT */
+#endif /* CONFIG_CACHE_MANAGEMENT && CONFIG_HAS_ARCH_CACHE */
 
 /** @} */
 

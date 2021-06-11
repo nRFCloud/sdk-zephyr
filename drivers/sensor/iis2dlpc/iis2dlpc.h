@@ -11,16 +11,19 @@
 #ifndef ZEPHYR_DRIVERS_SENSOR_IIS2DLPC_IIS2DLPC_H_
 #define ZEPHYR_DRIVERS_SENSOR_IIS2DLPC_IIS2DLPC_H_
 
-#include <drivers/spi.h>
 #include <drivers/gpio.h>
 #include <sys/util.h>
 #include <drivers/sensor.h>
+#include <stmemsc.h>
 #include "iis2dlpc_reg.h"
 
-union axis3bit16_t {
-	int16_t i16bit[3];
-	uint8_t u8bit[6];
-};
+#if DT_ANY_INST_ON_BUS_STATUS_OKAY(spi)
+#include <drivers/spi.h>
+#endif /* DT_ANY_INST_ON_BUS_STATUS_OKAY(spi) */
+
+#if DT_ANY_INST_ON_BUS_STATUS_OKAY(i2c)
+#include <drivers/i2c.h>
+#endif /* DT_ANY_INST_ON_BUS_STATUS_OKAY(i2c) */
 
 /* Return ODR reg value based on data rate set */
 #define IIS2DLPC_ODR_TO_REG(_odr) \
@@ -47,21 +50,27 @@ union axis3bit16_t {
 #define IIS2DLPC_SHIFT_PMOTHER		2
 
 /**
- * struct iis2dlpc_device_config - iis2dlpc hw configuration
+ * struct iis2dlpc_dev_config - iis2dlpc hw configuration
  * @bus_name: Pointer to bus master identifier.
  * @pm: Power mode (lis2dh_powermode).
- * @int_gpio_port: Pointer to GPIO PORT identifier.
- * @int_gpio_pin: GPIO pin number connecter to sensor int pin.
+ * @irq_dev_name: Pointer to GPIO PORT identifier.
+ * @irq_pin: GPIO pin number connecter to sensor int pin.
  * @drdy_int: Sensor drdy int (int1/int2).
  */
-struct iis2dlpc_device_config {
-	const char *bus_name;
+struct iis2dlpc_config {
+	stmdev_ctx_t ctx;
+	union {
+#if DT_ANY_INST_ON_BUS_STATUS_OKAY(i2c)
+		const struct stmemsc_cfg_i2c i2c;
+#endif
+#if DT_ANY_INST_ON_BUS_STATUS_OKAY(spi)
+		const struct stmemsc_cfg_spi spi;
+#endif
+	} stmemsc_cfg;
 	iis2dlpc_mode_t pm;
 	uint8_t range;
 #ifdef CONFIG_IIS2DLPC_TRIGGER
-	const char *int_gpio_port;
-	uint8_t int_gpio_pin;
-	uint8_t int_gpio_flags;
+	const struct gpio_dt_spec gpio_drdy;
 	uint8_t drdy_int;
 #ifdef CONFIG_IIS2DLPC_TAP
 	uint8_t tap_mode;
@@ -75,15 +84,13 @@ struct iis2dlpc_device_config {
 
 /* sensor data */
 struct iis2dlpc_data {
-	const struct device *bus;
+	const struct device *dev;
 	int16_t acc[3];
 
 	 /* save sensitivity */
 	uint16_t gain;
 
-	stmdev_ctx_t *ctx;
 #ifdef CONFIG_IIS2DLPC_TRIGGER
-	const struct device *dev;
 	const struct device *gpio;
 	uint8_t gpio_pin;
 	struct gpio_callback gpio_cb;
@@ -100,13 +107,7 @@ struct iis2dlpc_data {
 	struct k_work work;
 #endif /* CONFIG_IIS2DLPC_TRIGGER_GLOBAL_THREAD */
 #endif /* CONFIG_IIS2DLPC_TRIGGER */
-#if DT_INST_SPI_DEV_HAS_CS_GPIOS(0)
-	struct spi_cs_control cs_ctrl;
-#endif
 };
-
-int iis2dlpc_i2c_init(const struct device *dev);
-int iis2dlpc_spi_init(const struct device *dev);
 
 #ifdef CONFIG_IIS2DLPC_TRIGGER
 int iis2dlpc_init_interrupt(const struct device *dev);

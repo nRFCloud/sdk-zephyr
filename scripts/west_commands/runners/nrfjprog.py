@@ -6,12 +6,13 @@
 '''Runner for flashing with nrfjprog.'''
 
 import os
+from pathlib import Path
 import shlex
 import subprocess
 import sys
 from re import fullmatch, escape
 
-from runners.core import ZephyrBinaryRunner, RunnerCaps, BuildConfiguration
+from runners.core import ZephyrBinaryRunner, RunnerCaps
 
 try:
     from intelhex import IntelHex
@@ -168,13 +169,13 @@ class NrfJprogBinaryRunner(ZephyrBinaryRunner):
         if self.family is not None:
             return
 
-        if self.build_conf.get('CONFIG_SOC_SERIES_NRF51X', False):
+        if self.build_conf.getboolean('CONFIG_SOC_SERIES_NRF51X'):
             self.family = 'NRF51'
-        elif self.build_conf.get('CONFIG_SOC_SERIES_NRF52X', False):
+        elif self.build_conf.getboolean('CONFIG_SOC_SERIES_NRF52X'):
             self.family = 'NRF52'
-        elif self.build_conf.get('CONFIG_SOC_SERIES_NRF53X', False):
+        elif self.build_conf.getboolean('CONFIG_SOC_SERIES_NRF53X'):
             self.family = 'NRF53'
-        elif self.build_conf.get('CONFIG_SOC_SERIES_NRF91X', False):
+        elif self.build_conf.getboolean('CONFIG_SOC_SERIES_NRF91X'):
             self.family = 'NRF91'
         else:
             raise RuntimeError(f'unknown nRF; update {__file__}')
@@ -240,51 +241,11 @@ class NrfJprogBinaryRunner(ZephyrBinaryRunner):
             else:
                 erase_arg = '--sectorerase'
 
+        # What nrfjprog commands do we need to flash this target?
         program_commands = []
-
         if self.family == 'NRF53':
-            # ************** HACK HACK HACK *********************
-            # NCSDK-7327 workaround
-            # ***************************************************
-
-            # self.hex_ can contain code for both application core and network
-            # core. Code being flashed to the network core needs to have a
-            # specific argument provided to nrfjprog. If network code is found,
-            # generate two new hex files, one for each core, and flash them
-            # with the correct '--coprocessor' argument.
-            ih = IntelHex(self.hex_)
-            net_hex = IntelHex()
-            app_hex = IntelHex()
-            for s in ih.segments():
-                if s[0] >= 0x01000000:
-                    net_hex.merge(ih[s[0]:s[1]])
-                else:
-                    app_hex.merge(ih[s[0]:s[1]])
-
-            wd = os.path.dirname(self.hex_)
-            if len(net_hex) > 0:
-                net_hex_file = os.path.join(wd, 'GENERATED_CP_NETWORK_'
-                                            + os.path.basename(self.hex_))
-                self.logger.info("Generating CP_NETWORK hex file {}"
-                                 .format(net_hex_file))
-                net_hex.write_hex_file(net_hex_file)
-
-                program_net_cmd = ['nrfjprog', '--program', net_hex_file,
-                                   erase_arg, '-f', 'NRF53',
-                                   '--coprocessor', 'CP_NETWORK',
-                                   '--snr', self.snr] + self.tool_opt
-                program_commands.append(program_net_cmd)
-            if len(app_hex) > 0:
-                app_hex_file = os.path.join(wd, 'GENERATED_CP_APPLICATION_'
-                                            + os.path.basename(self.hex_))
-                self.logger.info("Generating CP_APPLICATION hex file {}"
-                                 .format(app_hex_file))
-                app_hex.write_hex_file(app_hex_file)
-                program_app_cmd = ['nrfjprog', '--program', app_hex_file,
-                                   erase_arg, '-f', 'NRF53',
-                                   '--coprocessor', 'CP_APPLICATION',
-                                   '--snr', self.snr] + self.tool_opt
-                program_commands.append(program_app_cmd)
+            # nRF53 requires special treatment due to the extra coprocessor.
+            self.program_hex_nrf53(erase_arg, program_commands)
         else:
             # It's important for tool_opt to come last, so it can override
             # any options that we set here.
@@ -314,6 +275,69 @@ class NrfJprogBinaryRunner(ZephyrBinaryRunner):
                     family_help)
             raise
 
+    def program_hex_nrf53(self, erase_arg, program_commands):
+        # program_hex() helper for nRF53.
+
+        # *********************** NOTE *******************************
+        # self.hex_ can contain code for both the application core and
+        # the network core.
+        #
+        # We can't assume, for example, that
+        # CONFIG_SOC_NRF5340_CPUAPP=y means self.hex_ only contains
+        # data for the app core's flash: the user can put arbitrary
+        # addresses into one of the files in HEX_FILES_TO_MERGE.
+        #
+        # Therefore, on this family, we may need to generate two new
+        # hex files, one for each core, and flash them individually
+        # with the correct '--coprocessor' arguments.
+        #
+        # Kind of hacky, but it works, and nrfjprog is not capable of
+        # flashing to both cores at once. If self.hex_ only affects
+        # one core's flash, then we skip the extra work to save time.
+        # ************************************************************
+
+        def add_program_cmd(hex_file, coprocessor):
+            program_commands.append(
+                ['nrfjprog', '--program', hex_file, erase_arg,
+                 '-f', 'NRF53', '--snr', self.snr,
+                 '--coprocessor', coprocessor] + self.tool_opt)
+
+        full_hex = IntelHex()
+        full_hex.loadfile(self.hex_, format='hex')
+        min_addr, max_addr = full_hex.minaddr(), full_hex.maxaddr()
+
+        # Base address of network coprocessor's flash. From nRF5340
+        # OPS. We should get this from DTS instead if multiple values
+        # are possible, but this is fine for now.
+        net_base = 0x01000000
+
+        if min_addr < net_base <= max_addr:
+            net_hex, app_hex = IntelHex(), IntelHex()
+
+            for start, stop in full_hex.segments():
+                segment_hex = net_hex if start >= net_base else app_hex
+                segment_hex.merge(full_hex[start:stop])
+
+            hex_path = Path(self.hex_)
+            hex_dir, hex_name = hex_path.parent, hex_path.name
+
+            net_hex_file = os.fspath(hex_dir / f'GENERATED_CP_NETWORK_{hex_name}')
+            app_hex_file = os.fspath(
+                hex_dir / f'GENERATED_CP_APPLICATION_{hex_name}')
+
+            self.logger.info(
+                f'{self.hex_} targets both nRF53 coprocessors; '
+                f'splitting it into: {net_hex_file} and {app_hex_file}')
+
+            net_hex.write_hex_file(net_hex_file)
+            app_hex.write_hex_file(app_hex_file)
+
+            add_program_cmd(net_hex_file, 'CP_NETWORK')
+            add_program_cmd(app_hex_file, 'CP_APPLICATION')
+        else:
+            coprocessor = 'CP_NETWORK' if max_addr >= net_base else 'CP_APPLICATION'
+            add_program_cmd(self.hex_, coprocessor)
+
     def reset_target(self):
         if self.family == 'NRF52' and not self.softreset:
             self.check_call(['nrfjprog', '--pinresetenable', '-f', self.family,
@@ -328,12 +352,8 @@ class NrfJprogBinaryRunner(ZephyrBinaryRunner):
 
     def do_run(self, command, **kwargs):
         self.require('nrfjprog')
-        self.build_conf = BuildConfiguration(self.cfg.build_dir)
-        if not os.path.isfile(self.hex_):
-            raise RuntimeError(
-                f'Cannot flash; hex file ({self.hex_}) does not exist. '
-                'Try enabling CONFIG_BUILD_OUTPUT_HEX.')
 
+        self.ensure_output('hex')
         self.ensure_snr()
         self.ensure_family()
         self.check_force_uicr()

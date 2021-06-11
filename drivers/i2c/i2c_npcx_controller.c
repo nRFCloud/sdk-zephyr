@@ -145,6 +145,7 @@ struct i2c_ctrl_data {
 	uint8_t *ptr_msg; /* current msg pointer for FIFO read/write */
 	uint16_t addr; /* slave address of transcation */
 	uint8_t port; /* current port used the controller */
+	const struct npcx_i2c_timing_cfg *ptr_speed_confs;
 };
 
 /* Driver convenience defines */
@@ -158,10 +159,16 @@ struct i2c_ctrl_data {
 	(struct smb_fifo_reg *)(DRV_CONFIG(dev)->base)
 
 /* Recommended I2C timing values are based on 15 MHz */
-static const struct npcx_i2c_timing_cfg npcx_speed_confs[] = {
+static const struct npcx_i2c_timing_cfg npcx_15m_speed_confs[] = {
 	[NPCX_I2C_BUS_SPEED_100KHZ] = {.HLDT = 0, .k1 = 75, .k2 = 0},
 	[NPCX_I2C_BUS_SPEED_400KHZ] = {.HLDT = 7, .k1 = 24, .k2 = 18,},
 	[NPCX_I2C_BUS_SPEED_1MHZ] = {.HLDT  = 7, .k1 = 14, .k2 = 10,},
+};
+
+static const struct npcx_i2c_timing_cfg npcx_20m_speed_confs[] = {
+	[NPCX_I2C_BUS_SPEED_100KHZ] = {.HLDT = 0, .k1 = 100, .k2 = 0},
+	[NPCX_I2C_BUS_SPEED_400KHZ] = {.HLDT = 7, .k1 = 32, .k2 = 22},
+	[NPCX_I2C_BUS_SPEED_1MHZ] = {.HLDT  = 7, .k1 = 16, .k2 = 10},
 };
 
 /* I2C controller inline functions access shared registers */
@@ -330,7 +337,9 @@ static void i2c_ctrl_config_bus_freq(const struct device *dev,
 						enum npcx_i2c_freq bus_freq)
 {
 	struct smb_reg *const inst = HAL_I2C_INSTANCE(dev);
-	const struct npcx_i2c_timing_cfg bus_cfg = npcx_speed_confs[bus_freq];
+	struct i2c_ctrl_data *const data = DRV_DATA(dev);
+	const struct npcx_i2c_timing_cfg bus_cfg =
+						data->ptr_speed_confs[bus_freq];
 
 	/* Switch to bank 0 to configure bus speed */
 	i2c_ctrl_bank_sel(dev, NPCX_I2C_BANK_NORMAL);
@@ -427,7 +436,7 @@ static int i2c_ctrl_recovery(const struct device *dev)
 	 * - Wait for STOP condition completed
 	 * - Then clear BB (BUS BUSY) bit
 	 */
-	inst_fifo->SMBST |= BIT(NPCX_SMBST_BER) | BIT(NPCX_SMBST_NEGACK);
+	inst_fifo->SMBST = BIT(NPCX_SMBST_BER) | BIT(NPCX_SMBST_NEGACK);
 	ret = i2c_ctrl_wait_stop_completed(dev, I2C_MAX_TIMEOUT);
 	inst_fifo->SMBCST |= BIT(NPCX_SMBCST_BB);
 	if (ret != 0) {
@@ -556,19 +565,31 @@ static void i2c_ctrl_handle_read_int_event(const struct device *dev)
 		size_t rx_occupied = i2c_ctrl_fifo_rx_occupied(dev);
 
 		LOG_DBG("rx remains %d, occupied %d", rx_remain, rx_occupied);
-		/*
-		 * Hold SCL line before reading data bytes from FIFO. Or the
-		 * hardware will release bus immediately before the driver
-		 * handles incoming data.
-		 */
-		i2c_ctrl_hold_bus(dev, 1);
+
+		/* Is it the last read transaction with STOP condition? */
+		if (rx_occupied >= rx_remain &&
+			(data->msg->flags & I2C_MSG_STOP) != 0) {
+			/*
+			 * Generate a STOP condition before reading data bytes
+			 * from FIFO. It prevents a glitch on SCL.
+			 */
+			i2c_ctrl_stop(dev);
+		} else {
+			/*
+			 * Hold SCL line here in case the hardware releases bus
+			 * immediately after the driver start to read data from
+			 * FIFO. Then we might lose incoming data from device.
+			 */
+			i2c_ctrl_hold_bus(dev, 1);
+		}
+
 		/* Read data bytes from FIFO */
 		for (int i = 0; i < rx_occupied; i++) {
 			*(data->ptr_msg++) = i2c_ctrl_fifo_read(dev);
 		}
 		rx_remain = i2c_ctrl_calculate_msg_remains(dev);
 
-		/* Setup threshold of RX FIFO next time */
+		/* Setup threshold of RX FIFO if needed */
 		if (rx_remain > 0) {
 			i2c_ctrl_fifo_rx_setup_threshold_nack(dev, rx_remain,
 					(data->msg->flags & I2C_MSG_STOP) != 0);
@@ -578,14 +599,8 @@ static void i2c_ctrl_handle_read_int_event(const struct device *dev)
 		}
 	}
 
-	/* Issue STOP after receiving message? */
+	/* Is the STOP condition issued? */
 	if ((data->msg->flags & I2C_MSG_STOP) != 0) {
-		/* Release bus */
-		i2c_ctrl_hold_bus(dev, 0);
-
-		/* Generate a STOP condition immediately */
-		i2c_ctrl_stop(dev);
-
 		/* Clear rx FIFO threshold and status bits */
 		i2c_ctrl_fifo_clear_status(dev);
 
@@ -686,7 +701,7 @@ static void i2c_ctrl_isr(const struct device *dev)
 		i2c_ctrl_stop(dev);
 
 		/* Clear BER Bit */
-		inst_fifo->SMBST |= BIT(NPCX_SMBST_BER);
+		inst_fifo->SMBST = BIT(NPCX_SMBST_BER);
 
 		/* Make sure slave doesn't hold bus by reading FIFO again */
 		tmp = i2c_ctrl_fifo_read(dev);
@@ -705,7 +720,7 @@ static void i2c_ctrl_isr(const struct device *dev)
 		i2c_ctrl_stop(dev);
 
 		/* Clear NEGACK Bit */
-		inst_fifo->SMBST |= BIT(NPCX_SMBST_NEGACK);
+		inst_fifo->SMBST = BIT(NPCX_SMBST_NEGACK);
 
 		/* End transaction */
 		data->oper_state = NPCX_I2C_WAIT_STOP;
@@ -779,6 +794,7 @@ int npcx_i2c_ctrl_transfer(const struct device *i2c_dev, struct i2c_msg *msgs,
 		if (i2c_ctrl_bus_busy(i2c_dev) ||
 		    data->oper_state == NPCX_I2C_ERROR_RECOVERY) {
 			ret = i2c_ctrl_recovery(i2c_dev);
+			/* Recovery failed, return it immediately */
 			if (ret) {
 				return ret;
 			}
@@ -789,6 +805,13 @@ int npcx_i2c_ctrl_transfer(const struct device *i2c_dev, struct i2c_msg *msgs,
 	data->port = port;
 	data->trans_err = 0;
 	data->addr = addr;
+
+	/*
+	 * Reset i2c event-completed semaphore before starting transactions.
+	 * Some interrupt events such as BUS_ERROR might change its counter
+	 * when bus is idle.
+	 */
+	k_sem_reset(&data->sync_sem);
 
 	for (i = 0U; i < num_msgs; i++) {
 		struct i2c_msg *msg = msgs + i;
@@ -818,7 +841,14 @@ int npcx_i2c_ctrl_transfer(const struct device *i2c_dev, struct i2c_msg *msgs,
 	}
 
 	if (data->oper_state == NPCX_I2C_ERROR_RECOVERY) {
-		ret = i2c_ctrl_recovery(i2c_dev);
+		int recovery_error = i2c_ctrl_recovery(i2c_dev);
+		/*
+		 * Recovery failed, return it immediately. Otherwise, the upper
+		 * layer still needs to know why the transaction failed.
+		 */
+		if (recovery_error != 0) {
+			return recovery_error;
+		}
 	}
 
 	return ret;
@@ -850,14 +880,22 @@ static int i2c_ctrl_init(const struct device *dev)
 		LOG_ERR("Get %s clock rate error.", dev->name);
 		return -EIO;
 	}
-	__ASSERT(i2c_rate == 15000000, "Unsupported apb2/3 freq for I2C!");
+
+	if (i2c_rate == 15000000)
+		data->ptr_speed_confs = npcx_15m_speed_confs;
+	else if (i2c_rate == 20000000) {
+		data->ptr_speed_confs = npcx_20m_speed_confs;
+	} else {
+		LOG_ERR("Unsupported apb2/3 freq for %s.", dev->name);
+		return -EIO;
+	}
 
 	/* Initialize i2c module */
 	i2c_ctrl_init_module(dev);
 
 	/* initialize mutux and semaphore for i2c/smb controller */
 	k_sem_init(&data->lock_sem, 1, 1);
-	k_sem_init(&data->sync_sem, 0, UINT_MAX);
+	k_sem_init(&data->sync_sem, 0, K_SEM_MAX_LIMIT);
 
 	/* Initialize driver status machine */
 	data->oper_state = NPCX_I2C_IDLE;
@@ -899,7 +937,7 @@ static int i2c_ctrl_init(const struct device *dev)
 									       \
 	DEVICE_DT_INST_DEFINE(inst,                                            \
 			    NPCX_I2C_CTRL_INIT_FUNC(inst),                     \
-			    device_pm_control_nop,                             \
+			    NULL,                                              \
 			    &i2c_ctrl_data_##inst, &i2c_ctrl_cfg_##inst,       \
 			    PRE_KERNEL_1, CONFIG_KERNEL_INIT_PRIORITY_DEVICE,  \
 			    NULL);                                             \

@@ -57,7 +57,9 @@ Next, you'll install some host dependencies using your package manager.
 
    .. group-tab:: Ubuntu
 
-      #. Use ``apt`` to install dependencies:
+      .. _install_dependencies_ubuntu:
+
+      #. Use ``apt`` to install the required dependencies:
 
          .. code-block:: bash
 
@@ -66,13 +68,13 @@ Next, you'll install some host dependencies using your package manager.
               python3-dev python3-pip python3-setuptools python3-tk python3-wheel xz-utils file \
               make gcc gcc-multilib g++-multilib libsdl2-dev
 
-      #. Verify the version of cmake installed on your system using::
+      #. Verify the version of cmake that is installed on your system by entering::
 
             cmake --version
 
-         If it's not version 3.13.1 or higher, follow these steps to
-         add the `Kitware third-party apt repository <https://apt.kitware.com/>`__
-         to get an updated version of cmake.
+         The version must be 3.13.1 or later. If your version is older, complete the following
+         steps to add the `Kitware third-party apt repository <https://apt.kitware.com/>`__,
+         which contains an updated version of cmake.
 
          a) Add the Kitware signing key:
 
@@ -87,7 +89,7 @@ Next, you'll install some host dependencies using your package manager.
 
                sudo apt-add-repository 'deb https://apt.kitware.com/ubuntu/ bionic main'
 
-         c) Then install the updated cmake with ``apt``:
+         c) Then install the updated version of cmake with ``apt``:
 
             .. code-block:: bash
 
@@ -96,13 +98,15 @@ Next, you'll install some host dependencies using your package manager.
 
    .. group-tab:: macOS
 
+      .. _install_dependencies_macos:
+
       #. Install `Homebrew <https://brew.sh/>`_:
 
          .. code-block:: bash
 
-            /usr/bin/ruby -e "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/master/install)"
+            /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
 
-      #. Use ``brew`` to install dependencies:
+      #. Use ``brew`` to install the required dependencies:
 
          .. code-block:: bash
 
@@ -130,27 +134,29 @@ Next, you'll install some host dependencies using your package manager.
 
       |p|
 
-      #. `Install chocolatey`_
+      .. _install_dependencies_windows:
 
-      #. Open an **Administrator** ``cmd.exe`` window: press the Windows key,
-         type "cmd.exe", right-click the result, and choose "Run as
-         Administrator".
+      #. `Install chocolatey`_.
 
-      #. Disable global confirmation to avoid having to confirm
+      #. Open a ``cmd.exe`` window as **Administrator**. To do so, press the Windows key,
+         type "cmd.exe", right-click the result, and choose :guilabel:`Run as
+         Administrator`.
+
+      #. Disable global confirmation to avoid having to confirm the
          installation of individual programs:
 
          .. code-block:: console
 
             choco feature enable -n allowGlobalConfirmation
 
-      #. Use ``choco`` to install dependencies:
+      #. Use ``choco`` to install the required dependencies:
 
          .. code-block:: console
 
             choco install cmake --installargs 'ADD_CMAKE_TO_PATH=System'
             choco install ninja gperf python git
 
-      #. Open a new ``cmd.exe`` window **as a regular user** to continue.
+      #. Close the window and open a new ``cmd.exe`` window **as a regular user** to continue.
 
 .. _Chocolatey: https://chocolatey.org/
 .. _Install chocolatey: https://chocolatey.org/install
@@ -292,14 +298,14 @@ to build Zephyr applications.
          .. code-block:: bash
 
             cd ~
-            wget https://github.com/zephyrproject-rtos/sdk-ng/releases/download/v0.12.1/zephyr-sdk-0.12.1-x86_64-linux-setup.run
+            wget https://github.com/zephyrproject-rtos/sdk-ng/releases/download/v0.12.4/zephyr-sdk-0.12.4-x86_64-linux-setup.run
 
-      #. Run the installer, installing the SDK in :file:`~/zephyr-sdk-0.12.1`:
+      #. Run the installer, installing the SDK in :file:`~/zephyr-sdk-0.12.4`:
 
          .. code-block:: bash
 
-            chmod +x zephyr-sdk-0.12.1-x86_64-linux-setup.run
-            ./zephyr-sdk-0.12.1-x86_64-linux-setup.run -- -d ~/zephyr-sdk-0.12.1
+            chmod +x zephyr-sdk-0.12.4-x86_64-linux-setup.run
+            ./zephyr-sdk-0.12.4-x86_64-linux-setup.run -- -d ~/zephyr-sdk-0.12.4
 
          .. note::
             It is recommended to install the Zephyr SDK at one of the following locations:
@@ -312,7 +318,7 @@ to build Zephyr applications.
             * ``/usr/zephyr-sdk[-x.y.z]``
             * ``/usr/local/zephyr-sdk[-x.y.z]``
 
-            where ``[-x.y.z]`` is optional text, and can be any text, for example ``-0.12.1``.
+            where ``[-x.y.z]`` is optional text, and can be any text, for example ``-0.12.4``.
 
             If installing the Zephyr SDK outside any of those locations, please read: :ref:`zephyr_sdk`
 
@@ -323,7 +329,7 @@ to build Zephyr applications.
 
          .. code-block:: bash
 
-            sudo cp ~/zephyr-sdk-0.12.1/sysroots/x86_64-pokysdk-linux/usr/share/openocd/contrib/60-openocd.rules /etc/udev/rules.d
+            sudo cp ~/zephyr-sdk-0.12.4/sysroots/x86_64-pokysdk-linux/usr/share/openocd/contrib/60-openocd.rules /etc/udev/rules.d
             sudo udevadm control --reload
 
    .. group-tab:: macOS

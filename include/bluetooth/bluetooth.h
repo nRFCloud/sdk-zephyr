@@ -54,6 +54,12 @@ struct bt_le_per_adv_sync;
 /* Don't require everyone to include conn.h */
 struct bt_conn;
 
+/* Don't require everyone to include iso.h */
+struct bt_iso_biginfo;
+
+/* Don't require everyone to include direction.h */
+struct bt_df_per_adv_sync_iq_samples_report;
+
 struct bt_le_ext_adv_sent_info {
 	/** The number of advertising events completed. */
 	uint8_t num_sent;
@@ -136,6 +142,10 @@ int bt_enable(bt_ready_cb_t cb);
  *
  * Set Bluetooth GAP Device Name.
  *
+ * When advertising with device name in the advertising data the name should
+ * be updated by calling @ref bt_le_adv_update_data or
+ * @ref bt_le_ext_adv_set_data.
+ *
  * @param name New name
  *
  * @return Zero on success or (negative) error code otherwise.
@@ -163,9 +173,11 @@ const char *bt_get_name(void);
  * At the moment, the given address must be a static random address. In the
  * future support for public addresses may be added.
  *
+ * @deprecated in 2.5 release, replace with bt_id_create before bt_enable.
+ *
  * @return Zero on success or (negative) error code otherwise.
  */
-int bt_set_id_addr(const bt_addr_le_t *addr);
+__deprecated int bt_set_id_addr(const bt_addr_le_t *addr);
 
 /**
  * @brief Get the currently configured identities.
@@ -175,6 +187,10 @@ int bt_set_id_addr(const bt_addr_le_t *addr);
  * elements in the @a addrs array should be CONFIG_BT_ID_MAX. The identity
  * identifier that some APIs expect (such as advertising parameters) is
  * simply the index of the identity in the @a addrs array.
+ *
+ * If @a addrs is passed as NULL, then returned @a count contains the
+ * count of all available identities that can be retrieved with a
+ * subsequent call to this function with non-NULL @a addrs parameter.
  *
  * @note Deleted identities may show up as BT_LE_ADDR_ANY in the returned
  * array.
@@ -200,6 +216,9 @@ void bt_id_get(bt_addr_le_t *addrs, size_t *count);
  * the address from and will be able to repeat the procedure on every power
  * cycle, i.e. it would be redundant to also store the information in flash.
  *
+ * Generating random static address or random IRK is not supported when calling
+ * this function before bt_enable().
+ *
  * If the application wants to have the stack randomly generate identities
  * and store them in flash for later recovery, the way to do it would be
  * to first initialize the stack (using bt_enable), then call settings_load(),
@@ -208,8 +227,8 @@ void bt_id_get(bt_addr_le_t *addrs, size_t *count);
  * call bt_id_create() to create new ones.
  *
  * @param addr Address to use for the new identity. If NULL or initialized
- *             to BT_ADDR_LE_ANY the stack will generate a new static
- *             random address for the identity and copy it to the given
+ *             to BT_ADDR_LE_ANY the stack will generate a new random
+ *             static address for the identity and copy it to the given
  *             parameter upon return from this function (in case the
  *             parameter was non-NULL).
  * @param irk  Identity Resolving Key (16 bytes) to be used with this
@@ -363,7 +382,26 @@ enum {
 	 */
 	BT_LE_ADV_OPT_USE_IDENTITY = BIT(2),
 
-	/** Advertise using GAP device name */
+	/** Advertise using GAP device name.
+	 *
+	 *  Include the GAP device name automatically when advertising.
+	 *  By default the GAP device name is put at the end of the scan
+	 *  response data.
+	 *  When advertising using @ref BT_LE_ADV_OPT_EXT_ADV and not
+	 *  @ref BT_LE_ADV_OPT_SCANNABLE then it will be put at the end of the
+	 *  advertising data.
+	 *  If the GAP device name does not fit into advertising data it will be
+	 *  converted to a shortened name if possible.
+	 *  @ref BT_LE_ADV_OPT_FORCE_NAME_IN_AD can be used to force the device
+	 *  name to appear in the advertising data of an advert with scan
+	 *  response data.
+	 *
+	 *  The application can set the device name itself by including the
+	 *  following in the advertising data.
+	 *  @code
+	 *  BT_DATA(BT_DATA_NAME_COMPLETE, name, strlen(name))
+	 *  @endcode
+	 */
 	BT_LE_ADV_OPT_USE_NAME = BIT(3),
 
 	/**
@@ -481,6 +519,16 @@ enum {
 
 	/** Disable advertising on channel index 39. */
 	BT_LE_ADV_OPT_DISABLE_CHAN_39 = BIT(17),
+
+	/**
+	 * @brief Put GAP device name into advert data
+	 *
+	 * Will place the GAP device name into the advertising data rather
+	 * than the scan response data.
+	 *
+	 * @note Requires @ref BT_LE_ADV_OPT_USE_NAME
+	 */
+	BT_LE_ADV_OPT_FORCE_NAME_IN_AD = BIT(18),
 };
 
 /** LE Advertising Parameters. */
@@ -492,9 +540,6 @@ struct bt_le_adv_param {
 	 *       enabled or not supported by the controller it is not possible
 	 *       to scan and advertise simultaneously using two different
 	 *       random addresses.
-	 *
-	 * @note It is not possible to have multiple connectable advertising
-	 *       sets advertising simultaneously using different identities.
 	 */
 	uint8_t  id;
 
@@ -569,10 +614,20 @@ enum {
 };
 
 struct bt_le_per_adv_param {
-	/** Minimum Periodic Advertising Interval (N * 1.25 ms) */
+	/**
+	 * @brief Minimum Periodic Advertising Interval (N * 1.25 ms)
+	 *
+	 * Shall be greater or equal to BT_GAP_PER_ADV_MIN_INTERVAL and
+	 * less or equal to interval_max.
+	 */
 	uint16_t interval_min;
 
-	/** Maximum Periodic Advertising Interval (N * 1.25 ms) */
+	/**
+	 * @brief Maximum Periodic Advertising Interval (N * 1.25 ms)
+	 *
+	 * Shall be less or equal to BT_GAP_PER_ADV_MAX_INTERVAL and
+	 * greater or equal to interval_min.
+	 */
 	uint16_t interval_max;
 
 	/** Bit-field of periodic advertising options */
@@ -627,6 +682,12 @@ struct bt_le_per_adv_param {
 					    BT_GAP_ADV_FAST_INT_MIN_2, \
 					    BT_GAP_ADV_FAST_INT_MAX_2, NULL)
 
+#define BT_LE_ADV_CONN_NAME_AD BT_LE_ADV_PARAM(BT_LE_ADV_OPT_CONNECTABLE | \
+					    BT_LE_ADV_OPT_USE_NAME | \
+					    BT_LE_ADV_OPT_FORCE_NAME_IN_AD, \
+					    BT_GAP_ADV_FAST_INT_MIN_2, \
+					    BT_GAP_ADV_FAST_INT_MAX_2, NULL)
+
 #define BT_LE_ADV_CONN_DIR_LOW_DUTY(_peer) \
 	BT_LE_ADV_PARAM(BT_LE_ADV_OPT_CONNECTABLE | BT_LE_ADV_OPT_ONE_TIME | \
 			BT_LE_ADV_OPT_DIR_MODE_LOW_DUTY, \
@@ -647,6 +708,14 @@ struct bt_le_per_adv_param {
 						 BT_GAP_ADV_FAST_INT_MIN_2, \
 						 BT_GAP_ADV_FAST_INT_MAX_2, \
 						 NULL)
+
+/** Connectable extended advertising with @ref BT_LE_ADV_OPT_USE_NAME */
+#define BT_LE_EXT_ADV_CONN_NAME BT_LE_ADV_PARAM(BT_LE_ADV_OPT_EXT_ADV | \
+						BT_LE_ADV_OPT_CONNECTABLE | \
+						BT_LE_ADV_OPT_USE_NAME, \
+						BT_GAP_ADV_FAST_INT_MIN_2, \
+						BT_GAP_ADV_FAST_INT_MAX_2, \
+						NULL)
 
 /** Non-connectable extended advertising with private address */
 #define BT_LE_EXT_ADV_NCONN BT_LE_ADV_PARAM(BT_LE_ADV_OPT_EXT_ADV, \
@@ -1099,7 +1168,7 @@ struct bt_le_per_adv_sync_recv_info {
 	/** The RSSI of the advertisement excluding any CTE. */
 	int8_t rssi;
 
-	/** The Constant Tone Extension (CTE) of the advertisement */
+	/** The Constant Tone Extension (CTE) of the advertisement (@ref bt_df_cte_type) */
 	uint8_t cte_type;
 };
 
@@ -1162,6 +1231,27 @@ struct bt_le_per_adv_sync_cb {
 	void (*state_changed)(struct bt_le_per_adv_sync *sync,
 			      const struct bt_le_per_adv_sync_state_info *info);
 
+	/**
+	 * @brief BIGInfo advertising report received.
+	 *
+	 * This callback notifies the application of a BIGInfo advertising report.
+	 * This is received if the advertiser is broadcasting isochronous streams in a BIG.
+	 * See iso.h for more information.
+	 *
+	 * @param sync     The advertising set object.
+	 * @param biginfo  The BIGInfo report.
+	 */
+	void (*biginfo)(struct bt_le_per_adv_sync *sync, const struct bt_iso_biginfo *biginfo);
+
+	/**
+	 * @brief Callback for IQ samples report collected when sampling
+	 *        CTE received with periodic advertising PDU.
+	 *
+	 * @param sync The periodic advertising sync object.
+	 * @param info Information about the sync event.
+	 */
+	void (*cte_report_cb)(struct bt_le_per_adv_sync *sync,
+			      struct bt_df_per_adv_sync_iq_samples_report const *info);
 
 	sys_snode_t node;
 };
@@ -1246,6 +1336,43 @@ struct bt_le_per_adv_sync_param {
  * The range of the returned value is 0..CONFIG_BT_PER_ADV_SYNC_MAX-1
  */
 uint8_t bt_le_per_adv_sync_get_index(struct bt_le_per_adv_sync *per_adv_sync);
+
+/** @brief Advertising set info structure. */
+struct bt_le_per_adv_sync_info {
+	/** Periodic Advertiser Address */
+	bt_addr_le_t addr;
+
+	/** Advertiser SID */
+	uint8_t sid;
+
+	/** Periodic advertising interval (N * 1.25 ms) */
+	uint16_t interval;
+
+	/** Advertiser PHY */
+	uint8_t phy;
+};
+
+/**
+ * @brief Get periodic adv sync information.
+ *
+ * @param per_adv_sync Periodic advertising sync object.
+ * @param info          Periodic advertising sync info object
+ *
+ * @return Zero on success or (negative) error code on failure.
+ */
+int bt_le_per_adv_sync_get_info(struct bt_le_per_adv_sync *per_adv_sync,
+				struct bt_le_per_adv_sync_info *info);
+
+/**
+ * @brief Look up an existing periodic advertising sync object by advertiser address.
+ *
+ * @param adv_addr Advertiser address.
+ * @param sid      The advertising set ID.
+ *
+ * @return Periodic advertising sync object or NULL if not found.
+ */
+struct bt_le_per_adv_sync *bt_le_per_adv_sync_lookup_addr(const bt_addr_le_t *adv_addr,
+							  uint8_t sid);
 
 /**
  * @brief Create a periodic advertising sync object.
@@ -1489,11 +1616,6 @@ enum {
 	 * @note Requires @ref BT_LE_SCAN_OPT_CODED.
 	 */
 	BT_LE_SCAN_OPT_NO_1M = BIT(3),
-
-	BT_LE_SCAN_FILTER_DUPLICATE __deprecated =
-		BT_LE_SCAN_OPT_FILTER_DUPLICATE,
-	BT_LE_SCAN_FILTER_WHITELIST __deprecated =
-		BT_LE_SCAN_OPT_FILTER_WHITELIST,
 };
 
 enum {
@@ -1509,13 +1631,8 @@ struct bt_le_scan_param {
 	/** Scan type (BT_LE_SCAN_TYPE_ACTIVE or BT_LE_SCAN_TYPE_PASSIVE) */
 	uint8_t  type;
 
-	union {
-		/** Bit-field of scanning filter options. */
-		uint32_t filter_dup __deprecated;
-
-		/** Bit-field of scanning options. */
-		uint32_t options;
-	};
+	/** Bit-field of scanning options. */
+	uint32_t options;
 
 	/** Scan interval (N * 0.625 ms) */
 	uint16_t interval;

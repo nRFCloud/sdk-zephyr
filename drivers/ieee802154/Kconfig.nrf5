@@ -33,7 +33,7 @@ config IEEE802154_NRF5_INIT_PRIO
 	  you know what you are doing.
 
 config IEEE802154_NRF5_EXT_IRQ_MGMT
-	bool "Radio IRQ is managed by an external module"
+	bool
 	help
 	  The driver may manage radio IRQs by itself, or use an external
 	  radio IRQ provider. When radio IRQs are managed by an external
@@ -42,15 +42,6 @@ config IEEE802154_NRF5_EXT_IRQ_MGMT
 	  Enable this option when external radio IRQ provider is enabled in
 	  the system. One example of external radio IRQ provider could be
 	  a radio arbiter used in dynamic multiprotocol applications.
-
-config IEEE802154_NRF5_PKT_TXTIME
-	bool "Driver's TX time support"
-	depends on !NRF_802154_SL_OPENSOURCE && !NRF_802154_SER_HOST
-	depends on NET_PKT_TXTIME
-	default y
-	help
-	  Enable TX time support. This is needed when upper layers want
-	  to set the exact time when the packet should be sent.
 
 config IEEE802154_NRF5_UICR_EUI64_ENABLE
 	bool "Enables using EUI64 value stored in UICR registers"

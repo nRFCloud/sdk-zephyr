@@ -412,6 +412,10 @@ expected to be implemented as part of an architecture port.
 
 * Atomic operators.
 
+  * If instructions do exist for a given architecture, the implementation is
+    configured using the :option:`CONFIG_ATOMIC_OPERATIONS_ARCH` Kconfig
+    option.
+
   * If instructions do not exist for a given architecture,
     a generic version that wraps :c:func:`irq_lock` or :c:func:`irq_unlock`
     around non-atomic operations exists. It is configured using the
@@ -824,8 +828,6 @@ on MMU systems and uncommon on MPU systems:
 
 * :c:func:`arch_mem_domain_partition_remove`
 
-* :c:func:`arch_mem_domain_destroy`
-
 Please see the doxygen documentation of these APIs for details.
 
 In addition to implementing these APIs, there are some other tasks as well:
@@ -861,49 +863,40 @@ Timing
 ======
 
 .. doxygengroup:: arch-timing
-   :project: Zephyr
 
 Threads
 =======
 
 .. doxygengroup:: arch-threads
-   :project: Zephyr
 
 .. doxygengroup:: arch-tls
-   :project: Zephyr
 
 Power Management
 ================
 
 .. doxygengroup:: arch-pm
-   :project: Zephyr
 
 Symmetric Multi-Processing
 ==========================
 
 .. doxygengroup:: arch-smp
-   :project: Zephyr
 
 Interrupts
 ==========
 
 .. doxygengroup:: arch-irq
-   :project: Zephyr
 
 Userspace
 =========
 
 .. doxygengroup:: arch-userspace
-   :project: Zephyr
 
 Memory Management
 =================
 
 .. doxygengroup:: arch-mmu
-   :project: Zephyr
 
 Miscellaneous Architecture APIs
 ===============================
 
 .. doxygengroup:: arch-misc
-   :project: Zephyr

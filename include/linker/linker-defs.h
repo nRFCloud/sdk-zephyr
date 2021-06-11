@@ -61,7 +61,7 @@
 	SECTION_PROLOGUE(struct_type##_area,,SUBALIGN(subalign)) \
 	{ \
 		Z_LINK_ITERABLE(struct_type); \
-	} GROUP_LINK_IN(ROMABLE_REGION)
+	} GROUP_ROM_LINK_IN(RAMABLE_REGION, ROMABLE_REGION)
 
 /* Define an output section which will set up an iterable area
  * of equally-sized data structures. For use with Z_STRUCT_SECTION_ITERABLE.
@@ -116,15 +116,13 @@
  */
 #define CREATE_OBJ_LEVEL(object, level)				\
 		__##object##_##level##_start = .;		\
-		KEEP(*(SORT(.object##_##level[0-9]*)));		\
-		KEEP(*(SORT(.object##_##level[1-9][0-9]*)));
+		KEEP(*(SORT(.z_##object##_##level[0-9]_*)));		\
+		KEEP(*(SORT(.z_##object##_##level[1-9][0-9]_*)));
 
 /*
  * link in shell initialization objects for all modules that use shell and
  * their shell commands are automatically initialized by the kernel.
  */
-
-#define APP_SMEM_SECTION() KEEP(*(SORT("data_smem_*")))
 
 #elif defined(_ASMLANGUAGE)
 
@@ -181,6 +179,12 @@ extern char __data_rom_start[];
 extern char __data_ram_start[];
 extern char __data_ram_end[];
 #endif /* CONFIG_XIP */
+
+#ifdef CONFIG_MMU
+/* Virtual addresses of page-aligned kernel image mapped into RAM at boot */
+extern char z_mapped_start[];
+extern char z_mapped_end[];
+#endif /* CONFIG_MMU */
 
 /* Includes text and rodata */
 extern char _image_rom_start[];
@@ -296,15 +300,18 @@ extern char z_priv_stacks_ram_start[];
 extern char z_priv_stacks_ram_end[];
 extern char z_user_stacks_start[];
 extern char z_user_stacks_end[];
+extern char z_kobject_data_begin[];
 #endif /* CONFIG_USERSPACE */
 
 #ifdef CONFIG_THREAD_LOCAL_STORAGE
 extern char __tdata_start[];
 extern char __tdata_end[];
 extern char __tdata_size[];
+extern char __tdata_align[];
 extern char __tbss_start[];
 extern char __tbss_end[];
 extern char __tbss_size[];
+extern char __tbss_align[];
 extern char __tls_start[];
 extern char __tls_end[];
 extern char __tls_size[];

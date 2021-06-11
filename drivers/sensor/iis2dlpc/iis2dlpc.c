@@ -35,10 +35,11 @@ static int iis2dlpc_set_range(const struct device *dev, uint8_t fs)
 {
 	int err;
 	struct iis2dlpc_data *iis2dlpc = dev->data;
-	const struct iis2dlpc_device_config *cfg = dev->config;
+	const struct iis2dlpc_config *cfg = dev->config;
+	stmdev_ctx_t *ctx = (stmdev_ctx_t *)&cfg->ctx;
 	uint8_t shift_gain = 0U;
 
-	err = iis2dlpc_full_scale_set(iis2dlpc->ctx, fs);
+	err = iis2dlpc_full_scale_set(ctx, fs);
 
 	if (cfg->pm == IIS2DLPC_CONT_LOW_PWR_12bit) {
 		shift_gain = IIS2DLPC_SHFT_GAIN_NOLP1;
@@ -46,8 +47,7 @@ static int iis2dlpc_set_range(const struct device *dev, uint8_t fs)
 
 	if (!err) {
 		/* save internally gain for optimization */
-		iis2dlpc->gain =
-			IIS2DLPC_FS_TO_GAIN(fs, shift_gain);
+		iis2dlpc->gain = IIS2DLPC_FS_TO_GAIN(fs, shift_gain);
 	}
 
 	return err;
@@ -60,13 +60,13 @@ static int iis2dlpc_set_range(const struct device *dev, uint8_t fs)
  */
 static int iis2dlpc_set_odr(const struct device *dev, uint16_t odr)
 {
-	struct iis2dlpc_data *iis2dlpc = dev->data;
+	const struct iis2dlpc_config *cfg = dev->config;
+	stmdev_ctx_t *ctx = (stmdev_ctx_t *)&cfg->ctx;
 	uint8_t val;
 
 	/* check if power off */
 	if (odr == 0U) {
-		return iis2dlpc_data_rate_set(iis2dlpc->ctx,
-					      IIS2DLPC_XL_ODR_OFF);
+		return iis2dlpc_data_rate_set(ctx, IIS2DLPC_XL_ODR_OFF);
 	}
 
 	val =  IIS2DLPC_ODR_TO_REG(odr);
@@ -75,7 +75,7 @@ static int iis2dlpc_set_odr(const struct device *dev, uint16_t odr)
 		return -ENOTSUP;
 	}
 
-	return iis2dlpc_data_rate_set(iis2dlpc->ctx, val);
+	return iis2dlpc_data_rate_set(ctx, val);
 }
 
 static inline void iis2dlpc_convert(struct sensor_value *val, int raw_val,
@@ -138,9 +138,10 @@ static int iis2dlpc_channel_get(const struct device *dev,
 	return -ENOTSUP;
 }
 
-static int iis2dlpc_config(const struct device *dev, enum sensor_channel chan,
-			    enum sensor_attribute attr,
-			    const struct sensor_value *val)
+static int iis2dlpc_dev_config(const struct device *dev,
+			       enum sensor_channel chan,
+			       enum sensor_attribute attr,
+			       const struct sensor_value *val)
 {
 	switch (attr) {
 	case SENSOR_ATTR_FULL_SCALE:
@@ -166,7 +167,7 @@ static int iis2dlpc_attr_set(const struct device *dev,
 	case SENSOR_CHAN_ACCEL_Y:
 	case SENSOR_CHAN_ACCEL_Z:
 	case SENSOR_CHAN_ACCEL_XYZ:
-		return iis2dlpc_config(dev, chan, attr, val);
+		return iis2dlpc_dev_config(dev, chan, attr, val);
 	default:
 		LOG_DBG("Attr not supported on %d channel", chan);
 		break;
@@ -179,12 +180,13 @@ static int iis2dlpc_sample_fetch(const struct device *dev,
 				 enum sensor_channel chan)
 {
 	struct iis2dlpc_data *iis2dlpc = dev->data;
-	const struct iis2dlpc_device_config *cfg = dev->config;
+	const struct iis2dlpc_config *cfg = dev->config;
+	stmdev_ctx_t *ctx = (stmdev_ctx_t *)&cfg->ctx;
 	uint8_t shift;
 	int16_t buf[3];
 
 	/* fetch raw data sample */
-	if (iis2dlpc_acceleration_raw_get(iis2dlpc->ctx, buf) < 0) {
+	if (iis2dlpc_acceleration_raw_get(ctx, buf) < 0) {
 		LOG_DBG("Failed to fetch raw data sample");
 		return -EIO;
 	}
@@ -212,30 +214,7 @@ static const struct sensor_driver_api iis2dlpc_driver_api = {
 	.channel_get = iis2dlpc_channel_get,
 };
 
-static int iis2dlpc_init_interface(const struct device *dev)
-{
-	struct iis2dlpc_data *iis2dlpc = dev->data;
-	const struct iis2dlpc_device_config *cfg = dev->config;
-
-	iis2dlpc->bus = device_get_binding(cfg->bus_name);
-	if (!iis2dlpc->bus) {
-		LOG_DBG("master bus not found: %s", cfg->bus_name);
-		return -EINVAL;
-	}
-
-#if DT_ANY_INST_ON_BUS_STATUS_OKAY(spi)
-	iis2dlpc_spi_init(dev);
-#elif DT_ANY_INST_ON_BUS_STATUS_OKAY(i2c)
-	iis2dlpc_i2c_init(dev);
-#else
-#error "BUS MACRO NOT DEFINED IN DTS"
-#endif
-
-	return 0;
-}
-
-static int iis2dlpc_set_power_mode(struct iis2dlpc_data *iis2dlpc,
-				    iis2dlpc_mode_t pm)
+static int iis2dlpc_set_power_mode(stmdev_ctx_t *ctx, iis2dlpc_mode_t pm)
 {
 	uint8_t regval = IIS2DLPC_CONT_LOW_PWR_12bit;
 
@@ -251,21 +230,20 @@ static int iis2dlpc_set_power_mode(struct iis2dlpc_data *iis2dlpc,
 		break;
 	}
 
-	return iis2dlpc_write_reg(iis2dlpc->ctx, IIS2DLPC_CTRL1, &regval, 1);
+	return iis2dlpc_write_reg(ctx, IIS2DLPC_CTRL1, &regval, 1);
 }
 
 static int iis2dlpc_init(const struct device *dev)
 {
 	struct iis2dlpc_data *iis2dlpc = dev->data;
-	const struct iis2dlpc_device_config *cfg = dev->config;
+	const struct iis2dlpc_config *cfg = dev->config;
+	stmdev_ctx_t *ctx = (stmdev_ctx_t *)&cfg->ctx;
 	uint8_t wai;
 
-	if (iis2dlpc_init_interface(dev)) {
-		return -EINVAL;
-	}
+	iis2dlpc->dev = dev;
 
 	/* check chip ID */
-	if (iis2dlpc_device_id_get(iis2dlpc->ctx, &wai) < 0) {
+	if (iis2dlpc_device_id_get(ctx, &wai) < 0) {
 		return -EIO;
 	}
 
@@ -275,20 +253,19 @@ static int iis2dlpc_init(const struct device *dev)
 	}
 
 	/* reset device */
-	if (iis2dlpc_reset_set(iis2dlpc->ctx, PROPERTY_ENABLE) < 0) {
+	if (iis2dlpc_reset_set(ctx, PROPERTY_ENABLE) < 0) {
 		return -EIO;
 	}
 
 	k_busy_wait(100);
 
-	if (iis2dlpc_block_data_update_set(iis2dlpc->ctx,
-					   PROPERTY_ENABLE) < 0) {
+	if (iis2dlpc_block_data_update_set(ctx, PROPERTY_ENABLE) < 0) {
 		return -EIO;
 	}
 
 	/* set power mode */
 	LOG_INF("power-mode is %d", cfg->pm);
-	if (iis2dlpc_set_power_mode(iis2dlpc, cfg->pm)) {
+	if (iis2dlpc_set_power_mode(ctx, cfg->pm)) {
 		return -EIO;
 	}
 
@@ -312,35 +289,32 @@ static int iis2dlpc_init(const struct device *dev)
 
 #ifdef CONFIG_IIS2DLPC_TAP
 	LOG_INF("TAP: tap mode is %d", cfg->tap_mode);
-	if (iis2dlpc_tap_mode_set(iis2dlpc->ctx, cfg->tap_mode) < 0) {
+	if (iis2dlpc_tap_mode_set(ctx, cfg->tap_mode) < 0) {
 		LOG_ERR("Failed to select tap trigger mode");
 		return -EIO;
 	}
 
 	LOG_INF("TAP: ths_x is %02x", cfg->tap_threshold[0]);
-	if (iis2dlpc_tap_threshold_x_set(iis2dlpc->ctx,
-					 cfg->tap_threshold[0]) < 0) {
+	if (iis2dlpc_tap_threshold_x_set(ctx, cfg->tap_threshold[0]) < 0) {
 		LOG_ERR("Failed to set tap X axis threshold");
 		return -EIO;
 	}
 
 	LOG_INF("TAP: ths_y is %02x", cfg->tap_threshold[1]);
-	if (iis2dlpc_tap_threshold_y_set(iis2dlpc->ctx,
-					 cfg->tap_threshold[1]) < 0) {
+	if (iis2dlpc_tap_threshold_y_set(ctx, cfg->tap_threshold[1]) < 0) {
 		LOG_ERR("Failed to set tap Y axis threshold");
 		return -EIO;
 	}
 
 	LOG_INF("TAP: ths_z is %02x", cfg->tap_threshold[2]);
-	if (iis2dlpc_tap_threshold_z_set(iis2dlpc->ctx,
-					 cfg->tap_threshold[2]) < 0) {
+	if (iis2dlpc_tap_threshold_z_set(ctx, cfg->tap_threshold[2]) < 0) {
 		LOG_ERR("Failed to set tap Z axis threshold");
 		return -EIO;
 	}
 
 	if (cfg->tap_threshold[0] > 0) {
 		LOG_INF("TAP: tap_x enabled");
-		if (iis2dlpc_tap_detection_on_x_set(iis2dlpc->ctx, 1) < 0) {
+		if (iis2dlpc_tap_detection_on_x_set(ctx, 1) < 0) {
 			LOG_ERR("Failed to set tap detection on X axis");
 			return -EIO;
 		}
@@ -348,7 +322,7 @@ static int iis2dlpc_init(const struct device *dev)
 
 	if (cfg->tap_threshold[1] > 0) {
 		LOG_INF("TAP: tap_y enabled");
-		if (iis2dlpc_tap_detection_on_y_set(iis2dlpc->ctx, 1) < 0) {
+		if (iis2dlpc_tap_detection_on_y_set(ctx, 1) < 0) {
 			LOG_ERR("Failed to set tap detection on Y axis");
 			return -EIO;
 		}
@@ -356,26 +330,26 @@ static int iis2dlpc_init(const struct device *dev)
 
 	if (cfg->tap_threshold[2] > 0) {
 		LOG_INF("TAP: tap_z enabled");
-		if (iis2dlpc_tap_detection_on_z_set(iis2dlpc->ctx, 1) < 0) {
+		if (iis2dlpc_tap_detection_on_z_set(ctx, 1) < 0) {
 			LOG_ERR("Failed to set tap detection on Z axis");
 			return -EIO;
 		}
 	}
 
 	LOG_INF("TAP: shock is %02x", cfg->tap_shock);
-	if (iis2dlpc_tap_shock_set(iis2dlpc->ctx, cfg->tap_shock) < 0) {
+	if (iis2dlpc_tap_shock_set(ctx, cfg->tap_shock) < 0) {
 		LOG_ERR("Failed to set tap shock duration");
 		return -EIO;
 	}
 
 	LOG_INF("TAP: latency is %02x", cfg->tap_latency);
-	if (iis2dlpc_tap_dur_set(iis2dlpc->ctx, cfg->tap_latency) < 0) {
+	if (iis2dlpc_tap_dur_set(ctx, cfg->tap_latency) < 0) {
 		LOG_ERR("Failed to set tap latency");
 		return -EIO;
 	}
 
 	LOG_INF("TAP: quiet time is %02x", cfg->tap_quiet);
-	if (iis2dlpc_tap_quiet_set(iis2dlpc->ctx, cfg->tap_quiet) < 0) {
+	if (iis2dlpc_tap_quiet_set(ctx, cfg->tap_quiet) < 0) {
 		LOG_ERR("Failed to set tap quiet time");
 		return -EIO;
 	}
@@ -385,28 +359,112 @@ static int iis2dlpc_init(const struct device *dev)
 	return 0;
 }
 
-const struct iis2dlpc_device_config iis2dlpc_cfg = {
-	.bus_name = DT_INST_BUS_LABEL(0),
-	.pm = DT_INST_PROP(0, power_mode),
-	.range = DT_INST_PROP(0, range),
-#ifdef CONFIG_IIS2DLPC_TRIGGER
-	.int_gpio_port = DT_INST_GPIO_LABEL(0, drdy_gpios),
-	.int_gpio_pin = DT_INST_GPIO_PIN(0, drdy_gpios),
-	.int_gpio_flags = DT_INST_GPIO_FLAGS(0, drdy_gpios),
-	.drdy_int = DT_INST_PROP(0, drdy_int),
+#if DT_NUM_INST_STATUS_OKAY(DT_DRV_COMPAT) == 0
+#warning "IIS2DLPC driver enabled without any devices"
+#endif
+
+/*
+ * Device creation macro, shared by IIS2DLPC_DEFINE_SPI() and
+ * IIS2DLPC_DEFINE_I2C().
+ */
+
+#define IIS2DLPC_DEVICE_INIT(inst)					\
+	DEVICE_DT_INST_DEFINE(inst,					\
+			    iis2dlpc_init,				\
+			    NULL,					\
+			    &iis2dlpc_data_##inst,			\
+			    &iis2dlpc_config_##inst,			\
+			    POST_KERNEL,				\
+			    CONFIG_SENSOR_INIT_PRIORITY,		\
+			    &iis2dlpc_driver_api);
+
+/*
+ * Instantiation macros used when a device is on a SPI bus.
+ */
 
 #ifdef CONFIG_IIS2DLPC_TAP
-	.tap_mode = DT_INST_PROP(0, tap_mode),
-	.tap_threshold = DT_INST_PROP(0, tap_threshold),
-	.tap_shock = DT_INST_PROP(0, tap_shock),
-	.tap_latency = DT_INST_PROP(0, tap_latency),
-	.tap_quiet = DT_INST_PROP(0, tap_quiet),
+#define IIS2DLPC_CONFIG_TAP(inst)					\
+	.tap_mode = DT_INST_PROP(inst, tap_mode),			\
+	.tap_threshold = DT_INST_PROP(inst, tap_threshold),		\
+	.tap_shock = DT_INST_PROP(inst, tap_shock),			\
+	.tap_latency = DT_INST_PROP(inst, tap_latency),			\
+	.tap_quiet = DT_INST_PROP(inst, tap_quiet),
+#else
+#define IIS2DLPC_CONFIG_TAP(inst)
 #endif /* CONFIG_IIS2DLPC_TAP */
+
+#ifdef CONFIG_IIS2DLPC_TRIGGER
+#define IIS2DLPC_CFG_IRQ(inst) \
+	.gpio_drdy = GPIO_DT_SPEC_INST_GET(inst, drdy_gpios),		\
+	.drdy_int = DT_INST_PROP(inst, drdy_int),
+#else
+#define IIS2DLPC_CFG_IRQ(inst)
 #endif /* CONFIG_IIS2DLPC_TRIGGER */
-};
 
-struct iis2dlpc_data iis2dlpc_data;
+#define IIS2DLPC_SPI_OPERATION (SPI_WORD_SET(8) |			\
+				SPI_OP_MODE_MASTER |			\
+				SPI_MODE_CPOL |				\
+				SPI_MODE_CPHA)				\
 
-DEVICE_DT_INST_DEFINE(0, iis2dlpc_init, device_pm_control_nop,
-	     &iis2dlpc_data, &iis2dlpc_cfg, POST_KERNEL,
-	     CONFIG_SENSOR_INIT_PRIORITY, &iis2dlpc_driver_api);
+#define IIS2DLPC_CONFIG_SPI(inst)					\
+	{								\
+		.ctx = {						\
+			.read_reg =					\
+			   (stmdev_read_ptr) stmemsc_spi_read,		\
+			.write_reg =					\
+			   (stmdev_write_ptr) stmemsc_spi_write,	\
+			.handle =					\
+			   (void *)&iis2dlpc_config_##inst.stmemsc_cfg,	\
+		},							\
+		.stmemsc_cfg.spi = {					\
+			.bus = DEVICE_DT_GET(DT_INST_BUS(inst)),	\
+			.spi_cfg = SPI_CONFIG_DT_INST(inst,		\
+					   IIS2DLPC_SPI_OPERATION,	\
+					   0),				\
+		},							\
+		.pm = DT_INST_PROP(inst, power_mode),			\
+		.range = DT_INST_PROP(inst, range),			\
+		IIS2DLPC_CONFIG_TAP(inst)				\
+		COND_CODE_1(DT_INST_NODE_HAS_PROP(inst, drdy_gpios),	\
+			(IIS2DLPC_CFG_IRQ(inst)), ())			\
+	}
+
+/*
+ * Instantiation macros used when a device is on an I2C bus.
+ */
+
+#define IIS2DLPC_CONFIG_I2C(inst)					\
+	{								\
+		.ctx = {						\
+			.read_reg =					\
+			   (stmdev_read_ptr) stmemsc_i2c_read,		\
+			.write_reg =					\
+			   (stmdev_write_ptr) stmemsc_i2c_write,	\
+			.handle =					\
+			   (void *)&iis2dlpc_config_##inst.stmemsc_cfg,	\
+		},							\
+		.stmemsc_cfg.i2c = {					\
+			.bus = DEVICE_DT_GET(DT_INST_BUS(inst)),	\
+			.i2c_slv_addr = DT_INST_REG_ADDR(inst),		\
+		},							\
+		.pm = DT_INST_PROP(inst, power_mode),			\
+		.range = DT_INST_PROP(inst, range),			\
+		IIS2DLPC_CONFIG_TAP(inst)				\
+		COND_CODE_1(DT_INST_NODE_HAS_PROP(inst, drdy_gpios),	\
+			(IIS2DLPC_CFG_IRQ(inst)), ())			\
+	}
+
+/*
+ * Main instantiation macro. Use of COND_CODE_1() selects the right
+ * bus-specific macro at preprocessor time.
+ */
+
+#define IIS2DLPC_DEFINE(inst)						\
+	static struct iis2dlpc_data iis2dlpc_data_##inst;		\
+	static const struct iis2dlpc_config iis2dlpc_config_##inst =	\
+	COND_CODE_1(DT_INST_ON_BUS(inst, spi),				\
+		    (IIS2DLPC_CONFIG_SPI(inst)),			\
+		    (IIS2DLPC_CONFIG_I2C(inst)));			\
+	IIS2DLPC_DEVICE_INIT(inst)
+
+DT_INST_FOREACH_STATUS_OKAY(IIS2DLPC_DEFINE)

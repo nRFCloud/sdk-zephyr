@@ -47,7 +47,6 @@ extern "C" {
 #define PF_NET_MGMT     5          /**< Network management info.      */
 #define PF_LOCAL        6          /**< Inter-process communication   */
 #define PF_UNIX         PF_LOCAL   /**< Inter-process communication   */
-#define PF_LTE          102        /**< Specific to LTE.              */
 
 /* Address families. */
 #define AF_UNSPEC      PF_UNSPEC   /**< Unspecified address family.   */
@@ -58,12 +57,13 @@ extern "C" {
 #define AF_NET_MGMT    PF_NET_MGMT /**< Network management info.      */
 #define AF_LOCAL       PF_LOCAL    /**< Inter-process communication   */
 #define AF_UNIX        PF_UNIX     /**< Inter-process communication   */
-#define AF_LTE         PF_LTE      /**< Specific to LTE.              */
 
 /** Protocol numbers from IANA/BSD */
 enum net_ip_protocol {
 	IPPROTO_IP = 0,            /**< IP protocol (pseudo-val for setsockopt() */
 	IPPROTO_ICMP = 1,          /**< ICMP protocol   */
+	IPPROTO_IGMP = 2,          /**< IGMP protocol   */
+	IPPROTO_IPIP = 4,          /**< IPIP tunnels    */
 	IPPROTO_TCP = 6,           /**< TCP protocol    */
 	IPPROTO_UDP = 17,          /**< UDP protocol    */
 	IPPROTO_IPV6 = 41,         /**< IPv6 protocol   */
@@ -80,23 +80,11 @@ enum net_ip_protocol_secure {
 	IPPROTO_DTLS_1_2 = 273,    /**< DTLS 1.2 protocol */
 };
 
-/* Protocol numbers for LTE protocols */
-enum net_lte_protocol {
-	NPROTO_AT = 513,
-	NPROTO_PDN = 514
-};
-
-/* Protocol numbers for LOCAL protocols */
-enum net_local_protocol {
-	NPROTO_DFU = 515
-};
-
 /** Socket type */
 enum net_sock_type {
-	SOCK_STREAM = 1,           /**< Stream socket type     */
-	SOCK_DGRAM,                /**< Datagram socket type   */
-	SOCK_RAW,                  /**< RAW socket type        */
-	SOCK_MGMT                  /**< Management socket type */
+	SOCK_STREAM = 1,           /**< Stream socket type   */
+	SOCK_DGRAM,                /**< Datagram socket type */
+	SOCK_RAW                   /**< RAW socket type      */
 };
 
 /** @brief Convert 16-bit value from network to host byte order.
@@ -775,6 +763,18 @@ static inline bool net_ipv6_addr_cmp(const struct in6_addr *addr1,
 static inline bool net_ipv6_is_ll_addr(const struct in6_addr *addr)
 {
 	return UNALIGNED_GET(&addr->s6_addr16[0]) == htons(0xFE80);
+}
+
+/**
+ * @brief Check if the given IPv6 address is a unique local address.
+ *
+ * @param addr A valid pointer on an IPv6 address
+ *
+ * @return True if it is, false otherwise.
+ */
+static inline bool net_ipv6_is_ula_addr(const struct in6_addr *addr)
+{
+	return addr->s6_addr[0] == 0xFD;
 }
 
 /**

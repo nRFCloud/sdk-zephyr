@@ -21,7 +21,7 @@ Modules to be included in the default manifest of the Zephyr project need to
 provide functionality or features endorsed and approved by the project Technical
 Steering Committee and should comply with the
 :ref:`module licensing requirements<modules_licensing>` and
-:ref:`contribute guidelines<modules_contributing>`. They should also have a
+:ref:`contribution guidelines<modules_contributing>`. They should also have a
 Zephyr developer that is committed to maintain the module codebase.
 
 Zephyr depends on several categories of modules, including but not limited to:
@@ -400,7 +400,7 @@ your own.
    use other Zephyr modules provided by :ref:`west <west>`.
    This can for example be useful for special test purposes.
 
-See the section about :ref:`west-multi-repo` for more details.
+See :ref:`west-basics` for more on west workspaces.
 
 Finally, you can also specify the list of modules yourself in various ways, or
 not use modules at all if your application doesn't need them.
@@ -753,7 +753,7 @@ Using West
 
 If west is installed and :makevar:`ZEPHYR_MODULES` is not already set, the
 build system finds all the modules in your :term:`west installation` and uses
-those. It does this by running :ref:`west list <west-multi-repo-misc>` to get
+those. It does this by running :ref:`west list <west-built-in-misc>` to get
 the paths of all the projects in the installation, then filters the results to
 just those projects which have the necessary module metadata files.
 
@@ -817,9 +817,6 @@ yourself, then no additional modules are added to the build. You will still be
 able to build any applications that don't require code or Kconfig options
 defined in an external repository.
 
-.. _submitting_new_modules:
-
-
 Submitting changes to modules
 ******************************
 
@@ -842,33 +839,28 @@ Note that multiple and dependent changes to different modules can be submitted
 using exactly the same process. In this case you will change multiple entries of
 all modules that have a pull request against them.
 
+.. _submitting_new_modules:
 
 Process for submitting a new module
 ===================================
 
-A request for a new module should be initialized using an RFC issue in the
-Zephyr project issue tracking system with details about the module and how it
-integrates into the project. If the request is approved, a new repository will
+Please follow the process in :ref:`external-src-process` and obtain the TSC
+approval to integrate the external source code as a module
+
+If the request is approved, a new repository will
 created by the project team and initialized with basic information that would
 allow submitting code to the module project following the project contribution
 guidelines.
 
-If a module is maintained as a fork of another project on Github, the Zephyr module
-related files and changes in relation to upstream need to be maintained in a
-special branch named ``zephyr``.
+If a module is maintained as a fork of another project on Github, the Zephyr
+module related files and changes in relation to upstream need to be maintained
+in a special branch named ``zephyr``.
 
-Follow the following steps to request a new module:
-
-#. Use `GitHub issues`_ to open an issue with details about the module to be
-   created
-#. Propose a name for the repository to be created under the Zephyr project
-   organization on Github.
-#. Maintainers from the Zephyr project will create the repository and initialize
-   it. You will be added as a collaborator in the new repository.
-#. Submit the module content (code) to the new repository following the
-   guidelines described :ref:`here <modules_using_west>`.
-#. Add a new entry to the :zephyr_file:`west.yml` with the following
-   information:
+Maintainers from the Zephyr project will create the repository and initialize
+it. You will be added as a collaborator in the new repository.  Submit the
+module content (code) to the new repository following the guidelines described
+:ref:`here <modules_using_west>`, and then add a new entry to the
+:zephyr_file:`west.yml` with the following information:
 
    .. code-block:: console
 

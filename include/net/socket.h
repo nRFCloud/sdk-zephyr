@@ -27,6 +27,7 @@
 #include <net/net_ip.h>
 #include <net/dns_resolve.h>
 #include <net/socket_select.h>
+#include <net/socket_ncs.h>
 #include <stdlib.h>
 
 #ifdef __cplusplus
@@ -55,12 +56,14 @@ struct zsock_pollfd {
 
 /** zsock_recv: Read data without removing it from socket input queue */
 #define ZSOCK_MSG_PEEK 0x02
-/** zsock_recv: Control received data truncation */
-#define ZSOCK_MSG_TRUNC 0x10
-/** zsock_recv: Request a blocking operation until the request is satisfied. */
-#define ZSOCK_MSG_WAITALL 0x20
+/** zsock_recv: return the real length of the datagram, even when it was longer
+ *  than the passed buffer
+ */
+#define ZSOCK_MSG_TRUNC 0x20
 /** zsock_recv/zsock_send: Override operation to non-blocking */
 #define ZSOCK_MSG_DONTWAIT 0x40
+/** zsock_recv: block until the full amount of data can be returned */
+#define ZSOCK_MSG_WAITALL 0x100
 
 /* Well-known values, e.g. from Linux man 2 shutdown:
  * "The constants SHUT_RD, SHUT_WR, SHUT_RDWR have the value 0, 1, 2,
@@ -124,19 +127,18 @@ struct zsock_pollfd {
  *    - 1 - server
  */
 #define TLS_DTLS_ROLE 6
-
 /** Socket option for setting the supported Application Layer Protocols.
  *  It accepts and returns a const char array of NULL terminated strings
  *  representing the supported application layer protocols listed during
  *  the TLS handshake.
  */
 #define TLS_ALPN_LIST 7
-
-/** Socket option to control TLS session caching. Accepted values:
- *  - 0 - Disabled.
- *  - 1 - Enabled.
+/** Socket option to set DTLS handshake timeout. The timeout starts at min,
+ *  and upon retransmission the timeout is doubled util max is reached.
+ *  Min and max arguments are separate options. The time unit is ms.
  */
-#define TLS_SESSION_CACHE 8
+#define TLS_DTLS_HANDSHAKE_TIMEOUT_MIN 8
+#define TLS_DTLS_HANDSHAKE_TIMEOUT_MAX 9
 
 /** @} */
 
@@ -148,10 +150,6 @@ struct zsock_pollfd {
 /* Valid values for TLS_DTLS_ROLE option */
 #define TLS_DTLS_ROLE_CLIENT 0 /**< Client role in a DTLS session. */
 #define TLS_DTLS_ROLE_SERVER 1 /**< Server role in a DTLS session. */
-
-/* Valid values for TLS_SESSION_CACHE option */
-#define TLS_SESSION_CACHE_DISABLED 0 /**< Disable TLS session caching. */
-#define TLS_SESSION_CACHE_ENABLED 1 /**< Enable TLS session caching. */
 
 struct zsock_addrinfo {
 	struct zsock_addrinfo *ai_next;
@@ -691,8 +689,22 @@ static inline ssize_t recv(int sock, void *buf, size_t max_len, int flags)
 	return zsock_recv(sock, buf, max_len, flags);
 }
 
-/* This conflicts with fcntl.h, so code must include fcntl.h before socket.h: */
-#define fcntl zsock_fcntl
+/*
+ * Need this wrapper because newer GCC versions got too smart and "typecheck"
+ * even macros, so '#define fcntl zsock_fcntl' leads to error.
+ */
+static inline int zsock_fcntl_wrapper(int sock, int cmd, ...)
+{
+	va_list args;
+	int flags;
+
+	va_start(args, cmd);
+	flags = va_arg(args, int);
+	va_end(args);
+	return zsock_fcntl(sock, cmd, flags);
+}
+
+#define fcntl zsock_fcntl_wrapper
 
 static inline ssize_t sendto(int sock, const void *buf, size_t len, int flags,
 			     const struct sockaddr *dest_addr,
@@ -787,8 +799,8 @@ static inline char *inet_ntop(sa_family_t family, const void *src, char *dst,
 
 #define MSG_PEEK ZSOCK_MSG_PEEK
 #define MSG_TRUNC ZSOCK_MSG_TRUNC
-#define MSG_WAITALL ZSOCK_MSG_WAITALL
 #define MSG_DONTWAIT ZSOCK_MSG_DONTWAIT
+#define MSG_WAITALL ZSOCK_MSG_WAITALL
 
 #define SHUT_RD ZSOCK_SHUT_RD
 #define SHUT_WR ZSOCK_SHUT_WR
@@ -802,33 +814,43 @@ static inline char *inet_ntop(sa_family_t family, const void *src, char *dst,
 #define EAI_MEMORY DNS_EAI_MEMORY
 #define EAI_SYSTEM DNS_EAI_SYSTEM
 #define EAI_SERVICE DNS_EAI_SERVICE
+#define EAI_SOCKTYPE DNS_EAI_SOCKTYPE
+#define EAI_FAMILY DNS_EAI_FAMILY
 #endif /* defined(CONFIG_NET_SOCKETS_POSIX_NAMES) */
+
+#define IFNAMSIZ Z_DEVICE_MAX_NAME_LEN
+
+/** Interface description structure */
+struct ifreq {
+	char ifr_name[IFNAMSIZ]; /* Interface name */
+};
 
 /** sockopt: Socket-level option */
 #define SOL_SOCKET 1
 
 /* Socket options for SOL_SOCKET level */
-/** sockopt: Enable server address reuse */
+/** sockopt: Enable server address reuse (ignored, for compatibility) */
 #define SO_REUSEADDR 2
+/** sockopt: Type of the socket */
+#define SO_TYPE 3
 /** sockopt: Async error (ignored, for compatibility) */
 #define SO_ERROR 4
-#define SO_SNDTIMEO 21
-#define SO_BINDTODEVICE 25
-/** sockopt: disable all replies to unexpected traffics */
-#define SO_SILENCE_ALL 30
-/** sockopt: disable IPv4 ICMP replies */
-#define SO_IP_ECHO_REPLY 31
-/** sockopt: disable IPv6 ICMP replies */
-#define SO_IPV6_ECHO_REPLY 32
 
 /**
  * sockopt: Receive timeout
  * Applies to receive functions like recv(), but not to connect()
  */
 #define SO_RCVTIMEO 20
+/** sockopt: Send timeout */
+#define SO_SNDTIMEO 21
+
+/** sockopt: Bind a socket to an interface */
+#define SO_BINDTODEVICE	25
 
 /** sockopt: Timestamp TX packets */
 #define SO_TIMESTAMPING 37
+/** sockopt: Protocol used with the socket */
+#define SO_PROTOCOL 38
 
 /* Socket options for IPPROTO_TCP level */
 /** sockopt: Disable TCP buffering (ignored, for compatibility) */
@@ -848,34 +870,6 @@ static inline char *inet_ntop(sa_family_t family, const void *src, char *dst,
 /* Socket options for SOCKS5 proxy */
 /** sockopt: Enable SOCKS5 for Socket */
 #define SO_SOCKS5 60
-
-/* Interface description structure */
-#define IFNAMSIZ 64
-
-struct ifreq {
-	char ifr_name[IFNAMSIZ]; /* Interface name */
-};
-
-/* Protocol level for PDN. */
-#define SOL_PDN 514
-
-/* Socket options for SOL_PDN level */
-#define SO_PDN_AF 1
-#define SO_PDN_CONTEXT_ID 2
-#define SO_PDN_STATE 3
-
-/* Protocol level for DFU. */
-#define SOL_DFU 515
-
-/* Socket options for SOL_DFU level */
-#define SO_DFU_FW_VERSION 1
-#define SO_DFU_RESOURCES 2
-#define SO_DFU_TIMEO 3
-#define SO_DFU_APPLY 4
-#define SO_DFU_REVERT 5
-#define SO_DFU_BACKUP_DELETE 6
-#define SO_DFU_OFFSET 7
-#define SO_DFU_ERROR 20
 
 /** @cond INTERNAL_HIDDEN */
 /**

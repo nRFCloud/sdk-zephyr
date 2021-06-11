@@ -27,22 +27,6 @@ properties:
       description: |
         GPIO connected to the controller RESET pin. This pin is active-low.
 
-    init-out-low:
-      type: int
-      required: false
-      default: 0
-      description: |
-        Bit mask identifying pins that should be initialized as outputs
-        driven low.
-
-    init-out-high:
-      type: int
-      required: false
-      default: 0
-      description: |
-        Bit mask identifying pins that should be initialized as outputs
-        driven high.
-
     "#gpio-cells":
       const: 2
 

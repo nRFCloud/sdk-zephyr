@@ -16,20 +16,25 @@ includes the SoC's ``.dtsi``. One way to figure out the devicetree's contents
 is by opening these files, e.g. by looking in
 ``dts/<ARCH>/<vendor>/<soc>.dtsi``, but this can be time consuming.
 
-Furthermore, you might want to see the actual generated header file. You might
-also be working with a board definition outside of the zephyr repository,
-making it unclear where ``BOARD.dts`` is in the first place.
+If you just want to see the "final" devicetree for your board, build an
+application and open the :file:`zephyr.dts` file in the build directory.
 
-Luckily, there is an easy way to do both: build your application.
+.. tip::
 
-For example, using west and the :ref:`qemu_cortex_m3` board to build
-:ref:`hello_world`, forcing CMake to re-run:
+   You can build :ref:`hello_world` to see the "base" devicetree for your board
+   without any additional changes from :ref:`overlay files <dt-input-files>`.
+
+For example, using the :ref:`qemu_cortex_m3` board to build :ref:`hello_world`:
 
 .. code-block:: sh
 
-   west build -b qemu_cortex_m3 -s samples/hello_world --cmake
+   # --cmake-only here just forces CMake to run, skipping the
+   # build process to save time.
+   west build -b qemu_cortex_m3 -s samples/hello_world --cmake-only
 
-The build system prints the output file locations:
+You can change ``qemu_cortex_m3`` to match your board.
+
+CMake prints the input and output file locations like this:
 
 .. code-block:: none
 
@@ -37,7 +42,11 @@ The build system prints the output file locations:
    -- Generated zephyr.dts: .../zephyr/build/zephyr/zephyr.dts
    -- Generated devicetree_unfixed.h: .../zephyr/build/zephyr/include/generated/devicetree_unfixed.h
 
-Change ``qemu_cortex_m3`` to the board you are using, of course.
+The :file:`zephyr.dts` file is the final devicetree in DTS format.
+
+The :file:`devicetree_unfixed.h` file is the corresponding generated header.
+
+See :ref:`devicetree-in-out-files` for details about these files.
 
 .. _dt-get-device:
 
@@ -50,7 +59,7 @@ When writing Zephyr applications, you'll often want to get a driver-level
 For example, with this devicetree fragment, you might want the struct device
 for ``serial@40002000``:
 
-.. code-block:: DTS
+.. code-block:: devicetree
 
    / {
            soc {
@@ -228,7 +237,7 @@ See :ref:`set-devicetree-overlays` for how to add an overlay to the build.
 Overlays can override node property values in multiple ways.
 For example, if your BOARD.dts contains this node:
 
-.. code-block:: DTS
+.. code-block:: devicetree
 
    / {
            soc {
@@ -343,7 +352,7 @@ compatibles) supported by the driver.
 
 .. note::
 
-  Historically, Zephyr has used Kconfig options like :option:`CONFIG_SPI_0` and
+  Historically, Zephyr has used Kconfig options like :option:`CONFIG_I2C_0` and
   :option:`CONFIG_I2C_1` to enable driver support for individual devices of
   some type. For example, if ``CONFIG_I2C_1=y``, the SoC's I2C peripheral
   driver would create a ``struct device`` for "I2C bus controller number 1".
@@ -456,7 +465,7 @@ using instance numbers. Do this after defining ``my_api_funcs``.
    	};								\
    	DEVICE_DT_INST_DEFINE(inst,					\
    			      my_dev_init_function,			\
-			      device_pm_control_nop,			\
+			      NULL,             			\
    			      &my_data_##inst,				\
    			      &my_cfg_##inst,				\
    			      MY_DEV_INIT_LEVEL, MY_DEV_INIT_PRIORITY,	\
@@ -495,14 +504,14 @@ labels like ``mydevice0``, ``mydevice1``, etc. appropriately for the IP blocks
 your driver supports. The resulting devicetree usually looks something like
 this:
 
-.. code-block:: DTS
+.. code-block:: devicetree
 
    / {
            soc {
-                   mydevice0: dev@... {
+                   mydevice0: dev@0 {
                            compatible = "vnd,my-device";
                    };
-                   mydevice1: dev@... {
+                   mydevice1: dev@1 {
                            compatible = "vnd,my-device";
                    };
            };
@@ -533,7 +542,7 @@ devicetree to operate on specific device nodes:
 	static const struct my_dev_cfg my_cfg_##idx = { /* ... */ };	\
    	DEVICE_DT_DEFINE(MYDEV(idx),					\
    			my_dev_init_function,				\
-			device_pm_control_nop,				\
+			NULL,           				\
 			&my_data_##idx,					\
 			&my_cfg_##idx,					\
 			MY_DEV_INIT_LEVEL, MY_DEV_INIT_PRIORITY,	\
@@ -650,7 +659,7 @@ node with path ``/soc/i2c@12340000`` in a C/C++ file:
 
 And if you're trying to **set** that property in a devicetree overlay:
 
-.. code-block:: DTS
+.. code-block:: none
 
    /*
     * foo.overlay: DTS names with special characters, etc.

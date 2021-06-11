@@ -40,10 +40,11 @@
 #include <linker/linker-defs.h>
 #include <offsets.h>
 #include <sys/util.h>
+#include <sys/mem_manage.h>
 
 #include <linker/linker-tool.h>
 
-#ifdef CONFIG_XIP
+#if defined(CONFIG_XIP) || defined(Z_VM_KERNEL)
 	#define ROMABLE_REGION ROM
 	#define RAMABLE_REGION RAM
 #else
@@ -51,17 +52,24 @@
 	#define RAMABLE_REGION RAM
 #endif
 
+#ifdef CONFIG_MMU
+	#define MMU_PAGE_ALIGN		. = ALIGN(CONFIG_MMU_PAGE_SIZE);
+#else
+	#define MMU_PAGE_ALIGN
+#endif
+
 /* Used to align areas with separate memory permission characteristics
  * so that the page permissions can be set in the MMU. Without this,
  * the kernel is just one blob with the same RWX permissions on all RAM
  */
 #ifdef CONFIG_SRAM_REGION_PERMISSIONS
-	#define MMU_PAGE_ALIGN	. = ALIGN(CONFIG_MMU_PAGE_SIZE);
+	#define MMU_PAGE_ALIGN_PERM	MMU_PAGE_ALIGN
 #else
-	#define MMU_PAGE_ALIGN
+	#define MMU_PAGE_ALIGN_PERM
 #endif
 
-ENTRY(CONFIG_KERNEL_ENTRY)
+epoint = Z_MEM_PHYS_ADDR(CONFIG_KERNEL_ENTRY);
+ENTRY(epoint)
 
 /* SECTIONS definitions */
 SECTIONS
@@ -90,6 +98,9 @@ SECTIONS
 	SECTION_PROLOGUE(_TEXT_SECTION_NAME,,)
 	{
 	_image_text_start = .;
+#ifndef CONFIG_XIP
+	z_mapped_start = .;
+#endif
 
 /* Located in generated directory. This file is populated by calling
  * zephyr_linker_sources(ROM_START ...). This typically contains the vector
@@ -97,8 +108,9 @@ SECTIONS
  */
 #include <snippets-rom-start.ld>
 
-	*(.text_start)
-	*(".text_start.*")
+	/* Needs KEEP() as ENTRY() is given a physical address */
+	KEEP(*(.text_start))
+	KEEP(*(".text_start.*"))
 	*(.text)
 	*(".text.*")
 	*(.gnu.linkonce.t.*)
@@ -107,13 +119,11 @@ SECTIONS
 	*(.init)
 	*(.fini)
 	*(.eini)
-	KEEP(*(.openocd_dbg))
-	KEEP(*(".openocd_dbg.*"))
 
 #include <linker/kobject-text.ld>
 
-	MMU_PAGE_ALIGN
-	} GROUP_LINK_IN(ROMABLE_REGION)
+	MMU_PAGE_ALIGN_PERM
+	} GROUP_ROM_LINK_IN(RAMABLE_REGION, ROMABLE_REGION)
 
 	_image_text_end = .;
 	_image_text_size = _image_text_end - _image_text_start;
@@ -131,15 +141,15 @@ SECTIONS
 #ifndef CONFIG_DYNAMIC_INTERRUPTS
 	. = ALIGN(8);
 	_idt_base_address = .;
-#ifdef LINKER_PASS2
+#ifdef LINKER_ZEPHYR_FINAL
 	KEEP(*(staticIdt))
 #else
 	. += CONFIG_IDT_NUM_VECTORS * 8;
-#endif /* LINKER_PASS2 */
+#endif /* LINKER_ZEPHYR_FINAL */
 
 	. = ALIGN(4);
 	_irq_to_interrupt_vector = .;
-#ifdef LINKER_PASS2
+#ifdef LINKER_ZEPHYR_FINAL
 	KEEP(*(irq_int_vector_map))
 #else
 	. += CONFIG_MAX_IRQ_LINES;
@@ -152,11 +162,11 @@ SECTIONS
 #include <snippets-rodata.ld>
 
 #include <linker/kobject-rom.ld>
-	} GROUP_LINK_IN(ROMABLE_REGION)
+	} GROUP_ROM_LINK_IN(RAMABLE_REGION, ROMABLE_REGION)
 
 #include <linker/cplusplus-rom.ld>
 
-	MMU_PAGE_ALIGN
+	MMU_PAGE_ALIGN_PERM
 	/* ROM ends here, position counter will now be in RAM areas */
 #ifdef CONFIG_XIP
 	_image_rom_end = .;
@@ -177,6 +187,10 @@ SECTIONS
 	/* RAMABLE_REGION */
 	GROUP_START(RAMABLE_REGION)
 
+#ifdef CONFIG_XIP
+	MMU_PAGE_ALIGN
+	z_mapped_start = .;
+#endif
 /* Located in generated directory. This file is populated by the
  * zephyr_linker_sources() Cmake function.
  */
@@ -184,8 +198,8 @@ SECTIONS
 
 #ifdef CONFIG_USERSPACE
 	/* APP SHARED MEMORY REGION */
-#define SMEM_PARTITION_ALIGN(size) MMU_PAGE_ALIGN
-#define APP_SHARED_ALIGN  MMU_PAGE_ALIGN
+#define SMEM_PARTITION_ALIGN(size) MMU_PAGE_ALIGN_PERM
+#define APP_SHARED_ALIGN  MMU_PAGE_ALIGN_PERM
 
 #include <app_smem.ld>
 
@@ -198,7 +212,7 @@ SECTIONS
 
 	SECTION_PROLOGUE(_BSS_SECTION_NAME, (NOLOAD),)
 	{
-	MMU_PAGE_ALIGN
+	MMU_PAGE_ALIGN_PERM
 #if !defined(CONFIG_USERSPACE)
 	_image_ram_start = .;
 #endif
@@ -221,13 +235,13 @@ SECTIONS
 	 */
 	. = ALIGN(4);
 	__bss_end = .;
-	} GROUP_DATA_LINK_IN(RAMABLE_REGION, RAMABLE_REGION)
+	} GROUP_NOLOAD_LINK_IN(RAMABLE_REGION, ROMABLE_REGION)
 
 	__bss_num_words	= (__bss_end - __bss_start) >> 2;
 
 #include <linker/common-noinit.ld>
 
-	MMU_PAGE_ALIGN
+	MMU_PAGE_ALIGN_PERM
 
 	SECTION_DATA_PROLOGUE(_DATA_SECTION_NAME,,)
 	{
@@ -241,18 +255,18 @@ SECTIONS
 #ifdef CONFIG_DYNAMIC_INTERRUPTS
 	. = ALIGN(4);
 	_irq_to_interrupt_vector = .;
-#ifdef LINKER_PASS2
+#ifdef LINKER_ZEPHYR_FINAL
 	KEEP(*(irq_int_vector_map))
 #else
 	. += CONFIG_MAX_IRQ_LINES;
-#endif /* LINKER_PASS2 */
+#endif /* LINKER_ZEPHYR_FINAL */
 
 	z_interrupt_vectors_allocated = .;
-#ifdef LINKER_PASS2
+#ifdef LINKER_ZEPHYR_FINAL
 	KEEP(*(irq_vectors_alloc))
 #else
 	. += (CONFIG_IDT_NUM_VECTORS + 7) / 8;
-#endif /* LINKER_PASS2 */
+#endif /* LINKER_ZEPHYR_FINAL */
 #endif /* CONFIG_DYNAMIC_INTERRUPTS */
 
 /* Located in generated directory. This file is populated by the
@@ -261,7 +275,7 @@ SECTIONS
 #include <snippets-rwdata.ld>
 
 #ifdef CONFIG_X86_KPTI
-	MMU_PAGE_ALIGN
+	MMU_PAGE_ALIGN_PERM
 	z_shared_kernel_page_start = .;
 	/* Special page containing supervisor data that is still mapped in
 	 * user mode page tables. IDT, GDT, TSSes, trampoline stack, and
@@ -274,20 +288,20 @@ SECTIONS
 #ifdef CONFIG_DYNAMIC_INTERRUPTS
 	. = ALIGN(8);
 	_idt_base_address = .;
-#ifdef LINKER_PASS2
+#ifdef LINKER_ZEPHYR_FINAL
 	KEEP(*(staticIdt))
 #else
 	. += CONFIG_IDT_NUM_VECTORS * 8;
-#endif /* LINKER_PASS2 */
+#endif /* LINKER_ZEPHYR_FINAL */
 #endif /* CONFIG_DYNAMIC_INTERRUPTS */
 
 #ifdef CONFIG_GDT_DYNAMIC
 	KEEP(*(.tss))
 	. = ALIGN(8);
 	_gdt = .;
-#ifdef LINKER_PASS2
+#ifdef LINKER_ZEPHYR_FINAL
 	KEEP(*(gdt))
-#else /* LINKER_PASS2 */
+#else /* LINKER_ZEPHYR_FINAL */
 
 #ifdef CONFIG_USERSPACE
     #define GDT_NUM_ENTRIES 7
@@ -297,12 +311,12 @@ SECTIONS
     #define GDT_NUM_ENTRIES 3
 #endif /* CONFIG_X86_USERSPACE */
 	. += GDT_NUM_ENTRIES * 8;
-#endif /* LINKER_PASS2 */
+#endif /* LINKER_ZEPHYR_FINAL */
 #endif /* CONFIG_GDT_DYNAMIC */
 
 #ifdef CONFIG_X86_KPTI
 	z_trampoline_stack_start = .;
-	MMU_PAGE_ALIGN
+	MMU_PAGE_ALIGN_PERM
 	z_trampoline_stack_end = .;
 	z_shared_kernel_page_end = .;
 
@@ -322,7 +336,7 @@ SECTIONS
 #include <arch/x86/pagetables.ld>
 
 /* Must be last in RAM */
-#include <linker/kobject.ld>
+#include <linker/kobject-data.ld>
 
 	MMU_PAGE_ALIGN
 	__data_ram_end = .;
@@ -334,11 +348,13 @@ SECTIONS
 	_image_ram_end = .;
 	_image_ram_all = (KERNEL_BASE_ADDR + KERNEL_RAM_SIZE) - _image_ram_start;
 
+	z_mapped_end = .;
+	z_mapped_size = z_mapped_end - z_mapped_start;
 	_end = .; /* end of image */
 
 	GROUP_END(RAMABLE_REGION)
 
-#ifndef LINKER_PASS2
+#ifndef LINKER_ZEPHYR_FINAL
 	/* static interrupts */
 	SECTION_PROLOGUE(intList,,)
 	{

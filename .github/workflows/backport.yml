@@ -4,6 +4,8 @@ on:
     types:
       - closed
       - labeled
+    branches:
+      - master
 
 jobs:
   backport:
@@ -16,4 +18,5 @@ jobs:
           bot_username: NordicBuilder
           bot_token: 151a9b45052f9ee8be5a59963d31ad7b92c3ecb5
           bot_token_key: 67bb1f1f998d546859786a4088917c65415c0ebd
-          github_token: ${{ secrets.GITHUB_TOKEN }}
+          github_token: ${{ secrets.ZB_GITHUB_TOKEN }}
+          issue_labels: backport

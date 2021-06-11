@@ -27,21 +27,18 @@
 #include <string.h>
 #include <sys/dlist.h>
 #include <kernel_internal.h>
-#include <kswap.h>
 #include <drivers/entropy.h>
 #include <logging/log_ctrl.h>
 #include <tracing/tracing.h>
 #include <stdbool.h>
 #include <debug/gcov.h>
 #include <kswap.h>
+#include <timing/timing.h>
 #include <logging/log.h>
 LOG_MODULE_REGISTER(os, CONFIG_KERNEL_LOG_LEVEL);
 
-/* boot time measurement items */
-#ifdef CONFIG_BOOT_TIME_MEASUREMENT
-uint32_t __noinit z_timestamp_main;  /* timestamp when main task starts */
-uint32_t __noinit z_timestamp_idle;  /* timestamp when CPU goes idle */
-#endif
+/* the only struct z_kernel instance */
+struct z_kernel _kernel;
 
 /* init/main and idle threads */
 K_THREAD_STACK_DEFINE(z_main_stack, CONFIG_MAIN_STACK_SIZE);
@@ -136,6 +133,14 @@ static void bg_thread_main(void *unused1, void *unused2, void *unused3)
 	ARG_UNUSED(unused2);
 	ARG_UNUSED(unused3);
 
+#ifdef CONFIG_MMU
+	/* Invoked here such that backing store or eviction algorithms may
+	 * initialize kernel objects, and that all POST_KERNEL and later tasks
+	 * may perform memory management tasks (except for z_phys_map() which
+	 * is allowed at any time)
+	 */
+	z_mem_manage_init();
+#endif /* CONFIG_MMU */
 	z_sys_post_kernel = true;
 
 	z_sys_init_run_level(_SYS_INIT_LEVEL_POST_KERNEL);
@@ -157,17 +162,13 @@ static void bg_thread_main(void *unused1, void *unused2, void *unused3)
 
 	z_init_static_threads();
 
-#ifdef KERNEL_COHERENCE
-	__ASSERT_NO_MSG(arch_mem_coherent(_kernel));
+#ifdef CONFIG_KERNEL_COHERENCE
+	__ASSERT_NO_MSG(arch_mem_coherent(&_kernel));
 #endif
 
 #ifdef CONFIG_SMP
 	z_smp_init();
 	z_sys_init_run_level(_SYS_INIT_LEVEL_SMP);
-#endif
-
-#ifdef CONFIG_BOOT_TIME_MEASUREMENT
-	z_timestamp_main = k_cycle_get_32();
 #endif
 
 	extern void main(void);
@@ -233,7 +234,6 @@ static void init_idle_thread(int i)
 static char *prepare_multithreading(void)
 {
 	char *stack_ptr;
-	uint32_t opt;
 
 	/* _kernel.ready_q is all zeroes */
 	z_sched_init();
@@ -250,18 +250,11 @@ static char *prepare_multithreading(void)
 	 */
 	_kernel.ready_q.cache = &z_main_thread;
 #endif
-
-	opt = K_ESSENTIAL;
-#if defined(CONFIG_FPU) && defined(CONFIG_FPU_SHARING)
-	/* Enable FPU in main thread */
-	opt |= K_FP_REGS;
-#endif
-
 	stack_ptr = z_setup_new_thread(&z_main_thread, z_main_stack,
 				       CONFIG_MAIN_STACK_SIZE, bg_thread_main,
 				       NULL, NULL, NULL,
 				       CONFIG_MAIN_THREAD_PRIORITY,
-				       opt, "main");
+				       K_ESSENTIAL, "main");
 	z_mark_thread_as_started(&z_main_thread);
 	z_ready_thread(&z_main_thread);
 
@@ -333,7 +326,7 @@ sys_rand_fallback:
 	 * those devices without a HWRNG entropy driver.
 	 */
 
-	while (length > 0) {
+	while (length > 0U) {
 		uint32_t rndbits;
 		uint8_t *p_rndbits = (uint8_t *)&rndbits;
 
@@ -383,6 +376,8 @@ FUNC_NORETURN void z_cstart(void)
 
 	z_dummy_thread_init(&dummy_thread);
 #endif
+	/* do any necessary initialization of static devices */
+	z_device_state_init();
 
 	/* perform basic hardware initialization */
 	z_sys_init_run_level(_SYS_INIT_LEVEL_PRE_KERNEL_1);
@@ -396,7 +391,7 @@ FUNC_NORETURN void z_cstart(void)
 	__stack_chk_guard <<= 8;
 #endif	/* CONFIG_STACK_CANARIES */
 
-#ifdef CONFIG_THREAD_RUNTIME_STATS_USE_TIMING_FUNCTIONS
+#ifdef CONFIG_TIMING_FUNCTIONS_NEED_AT_BOOT
 	timing_init();
 	timing_start();
 #endif

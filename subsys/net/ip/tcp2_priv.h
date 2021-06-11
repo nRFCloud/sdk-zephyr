@@ -20,11 +20,15 @@
 #define th_flags(_x) UNALIGNED_GET(&(_x)->th_flags)
 #define th_win(_x) UNALIGNED_GET(&(_x)->th_win)
 
-#define tcp_slist(_slist, _op, _type, _link)				\
+#define tcp_slist(_conn, _slist, _op, _type, _link)			\
 ({									\
+	k_mutex_lock(&conn->lock, K_FOREVER);				\
+									\
 	sys_snode_t *_node = sys_slist_##_op(_slist);			\
 									\
 	_type * _x = _node ? CONTAINER_OF(_node, _type, _link) : NULL;	\
+									\
+	k_mutex_unlock(&conn->lock);					\
 									\
 	_x;								\
 })
@@ -118,18 +122,20 @@
 	(_conn)->state = _s;						\
 })
 
-#define conn_send_data_dump(_conn)					\
-({									\
-	NET_DBG("conn: %p total=%zd, unacked_len=%d, "			\
-		"send_win=%hu, mss=%hu",				\
-		(_conn), net_pkt_get_len((_conn)->send_data),		\
-		conn->unacked_len, conn->send_win,			\
-		(uint16_t)conn_mss((_conn)));				\
-	NET_DBG("conn: %p send_data_timer=%hu, send_data_retries=%hu",	\
-		(_conn),						\
-		(bool)k_delayed_work_remaining_get(&(_conn)->send_data_timer),\
-		(_conn)->send_data_retries);				\
-})
+#define conn_send_data_dump(_conn)                                             \
+	({                                                                     \
+		NET_DBG("conn: %p total=%zd, unacked_len=%d, "                 \
+			"send_win=%hu, mss=%hu",                               \
+			(_conn), net_pkt_get_len((_conn)->send_data),          \
+			conn->unacked_len, conn->send_win,                     \
+			(uint16_t)conn_mss((_conn)));                          \
+		NET_DBG("conn: %p send_data_timer=%hu, send_data_retries=%hu", \
+			(_conn),                                               \
+			(bool)k_ticks_to_ms_ceil32(                            \
+				k_work_delayable_remaining_get(                \
+					&(_conn)->send_data_timer)),           \
+			(_conn)->send_data_retries);                           \
+	})
 
 #define TCPOPT_END	0
 #define TCPOPT_NOP	1
@@ -148,7 +154,7 @@ struct tcphdr {
 	uint32_t th_ack;
 #if __BYTE_ORDER__ == __ORDER_LITTLE_ENDIAN__
 	uint8_t th_x2:4;	/* unused */
-	uint8_t th_off:4;	/* data offset */
+	uint8_t th_off:4;	/* data offset, in units of 32-bit words */
 #endif
 #if __BYTE_ORDER__ == __ORDER_BIG_ENDIAN__
 	uint8_t th_off:4;
@@ -219,11 +225,18 @@ struct tcp { /* TCP connection */
 	struct k_sem connect_sem; /* semaphore for blocking connect */
 	struct k_fifo recv_data;  /* temp queue before passing data to app */
 	struct tcp_options recv_options;
-	struct k_delayed_work send_timer;
-	struct k_delayed_work recv_queue_timer;
-	struct k_delayed_work send_data_timer;
-	struct k_delayed_work timewait_timer;
-	struct k_delayed_work fin_timer;
+	struct k_work_delayable send_timer;
+	struct k_work_delayable recv_queue_timer;
+	struct k_work_delayable send_data_timer;
+	struct k_work_delayable timewait_timer;
+	union {
+		/* Because FIN and establish timers are never happening
+		 * at the same time, share the timer between them to
+		 * save memory.
+		 */
+		struct k_work_delayable fin_timer;
+		struct k_work_delayable establish_timer;
+	};
 	union tcp_endpoint src;
 	union tcp_endpoint dst;
 	size_t send_data_total;

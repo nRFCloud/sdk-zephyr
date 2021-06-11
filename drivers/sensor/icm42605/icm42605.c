@@ -66,7 +66,7 @@ static inline void icm42605_convert_temp(struct sensor_value *val,
 
 static int icm42605_channel_get(const struct device *dev,
 				enum sensor_channel chan,
-				const struct sensor_value *val)
+				struct sensor_value *val)
 {
 	const struct icm42605_data *drv_data = dev->data;
 
@@ -124,7 +124,7 @@ static int icm42605_channel_get(const struct device *dev,
 int icm42605_tap_fetch(const struct device *dev)
 {
 	int result = 0;
-	const struct icm42605_data *drv_data = dev->data;
+	struct icm42605_data *drv_data = dev->data;
 
 	if (drv_data->tap_en &&
 	    (drv_data->tap_handler || drv_data->double_tap_handler)) {
@@ -135,18 +135,22 @@ int icm42605_tap_fetch(const struct device *dev)
 			if (drv_data->fifo_data[0] & APEX_TAP) {
 				if (drv_data->tap_trigger.type ==
 				    SENSOR_TRIG_TAP) {
-					LOG_DBG("Single Tap detected");
-					drv_data->tap_handler(dev
-					      , &drv_data->tap_trigger);
+					if (drv_data->tap_handler) {
+						LOG_DBG("Single Tap detected");
+						drv_data->tap_handler(dev
+						      , &drv_data->tap_trigger);
+					}
 				} else {
 					LOG_ERR("Trigger type is mismatched");
 				}
 			} else if (drv_data->fifo_data[0] & APEX_DOUBLE_TAP) {
 				if (drv_data->double_tap_trigger.type ==
 				    SENSOR_TRIG_DOUBLE_TAP) {
-					LOG_DBG("Double Tap detected");
-					drv_data->double_tap_handler(dev
+					if (drv_data->double_tap_handler) {
+						LOG_DBG("Double Tap detected");
+						drv_data->double_tap_handler(dev
 						     , &drv_data->tap_trigger);
+					}
 				} else {
 					LOG_ERR("Trigger type is mismatched");
 				}
@@ -456,8 +460,9 @@ static const struct sensor_driver_api icm42605_driver_api = {
 #define ICM42605_INIT(index)						\
 	ICM42605_DEFINE_CONFIG(index);					\
 	static struct icm42605_data icm42605_driver_##index;		\
-	DEVICE_AND_API_INIT(icm42605_##index, DT_INST_LABEL(index),	\
-			    icm42605_init, &icm42605_driver_##index,	\
+	DEVICE_DT_INST_DEFINE(index, icm42605_init,			\
+			    NULL,					\
+			    &icm42605_driver_##index,			\
 			    &icm42605_cfg_##index, POST_KERNEL,		\
 			    CONFIG_SENSOR_INIT_PRIORITY,		\
 			    &icm42605_driver_api);

@@ -3,6 +3,9 @@
 Threads
 #######
 
+.. note::
+   There is also limited support for using :ref:`nothread`.
+
 .. contents::
     :local:
     :depth: 2
@@ -82,15 +85,21 @@ A thread that terminates is responsible for releasing any shared resources
 it may own (such as mutexes and dynamically allocated memory)
 prior to returning, since the kernel does *not* reclaim them automatically.
 
-.. note::
-    The kernel does not currently make any claims regarding an application's
-    ability to respawn a thread that terminates.
-
 In some cases a thread may want to sleep until another thread terminates.
 This can be accomplished with the :c:func:`k_thread_join` API. This
 will block the calling thread until either the timeout expires, the target
 thread self-exits, or the target thread aborts (either due to a
 k_thread_abort() call or triggering a fatal error).
+
+Once a thread has terminated, the kernel guarantees that no use will
+be made of the thread struct.  The memory of such a struct can then be
+re-used for any purpose, including spawning a new thread.  Note that
+the thread must be fully terminated, which presents race conditions
+where a thread's own logic signals completion which is seen by another
+thread before the kernel processing is complete.  Under normal
+circumstances, application code should use :c:func:`k_thread_join` or
+:c:func:`k_thread_abort` to synchronize on thread termination state
+and not rely on signaling from within application logic.
 
 Thread Aborting
 ===============
@@ -170,11 +179,11 @@ met:
   sized and aligned such that a memory protection region may be programmed
   to exactly fit.
 
-The aligment constraints can be quite restrictive, for example some MPUs
+The alignment constraints can be quite restrictive, for example some MPUs
 require their regions to be of some power of two in size, and aligned to its
 own size.
 
-Becasue of this, portable code can't simply pass an arbitrary character buffer
+Because of this, portable code can't simply pass an arbitrary character buffer
 to :c:func:`k_thread_create`. Special macros exist to instantiate stacks,
 prefixed with ``K_KERNEL_STACK`` and ``K_THREAD_STACK``.
 
@@ -532,4 +541,5 @@ API Reference
 **************
 
 .. doxygengroup:: thread_apis
-   :project: Zephyr
+
+.. doxygengroup:: thread_stack_api
