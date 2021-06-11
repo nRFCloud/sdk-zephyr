@@ -358,8 +358,6 @@ void *sys_heap_aligned_alloc(struct sys_heap *heap, size_t align, size_t bytes)
 	return mem;
 }
 
-void *sys_heap_aligned_realloc(struct sys_heap *heap, void *ptr,
-			       size_t align, size_t bytes)
 void heap_print_stats(struct z_heap *h)
 {
 	printk("Heap stats for %p | Free: %u (min %u) "
@@ -368,7 +366,7 @@ void heap_print_stats(struct z_heap *h)
 	       h->avail_chunks_min * CHUNK_UNIT,
 	       h->avail_contig * CHUNK_UNIT,
 	       h->avail_contig_min * CHUNK_UNIT,
-	       h->len * CHUNK_UNIT);
+	       h->end_chunk * CHUNK_UNIT);
 }
 
 uint32_t heap_stats(bool print)
@@ -407,7 +405,8 @@ void sys_heap_get_stats(struct sys_heap *h, struct sys_heap_stats *stats)
 	stats->avail_contig_min = h->heap->avail_contig_min;
 }
 
-void *sys_heap_realloc(struct sys_heap *heap, void *ptr, size_t bytes)
+void *sys_heap_aligned_realloc(struct sys_heap *heap, void *ptr,
+			       size_t align, size_t bytes)
 {
 	struct z_heap *h = heap->heap;
 
